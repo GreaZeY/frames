@@ -37,16 +37,13 @@ export interface RouteProps {
  * Conditionally renders its children when the current path matches.
  */
 export function Route(props: RouteProps) {
-    // Return a derived signal so the runtime patches only when the match changes
-    return derived(() => {
-        // Note: props.path is accessed inside the tracking context,
-        // so if the `path` prop itself was reactive, it would track too!
+    // Return a function so `insert()` wraps it in an effect natively!
+    return () => {
         if (currentPath.value === props.path) {
-            // Evaluates children lazily ONLY when route matches
-            return props.children;
+            return typeof props.children === 'function' ? props.children() : props.children;
         }
         return null;
-    });
+    };
 }
 
 export interface LinkProps {
