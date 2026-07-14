@@ -17,6 +17,7 @@ const STORE_RAW = Symbol('store_raw');
 const STORE_SUBSCRIBERS = Symbol('store_subscribers');
 
 type SubscriberMap = Map<string | symbol, Set<() => void>>;
+const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse']);
 
 function getSubscribers(obj: any): SubscriberMap {
     if (!obj[STORE_SUBSCRIBERS]) {
@@ -50,6 +51,7 @@ function trackProperty(subs: SubscriberMap, key: string | symbol) {
 function notifyProperty(subs: SubscriberMap, key: string | symbol) {
     const subSet = subs.get(key);
     if (subSet) {
+        // MUST copy to prevent infinite loops
         const toRun = [...subSet];
         for (const sub of toRun) {
             sub();
@@ -73,7 +75,7 @@ function createProxy<T extends object>(target: T): T {
     // Cache child proxies so we return the same reference
     const childProxies = new Map<string | symbol, any>();
 
-    const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse']);
+
 
     return new Proxy(target, {
         get(obj, key, receiver) {

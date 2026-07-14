@@ -10,16 +10,17 @@ export function insert(parent: Node, child: any, anchor: Node | null = null, cur
         return current;
     }
 
-    // Cleanup previous nodes recursively
-    function cleanup(nodeOrArray: any) {
-        if (nodeOrArray == null) return;
-        if (Array.isArray(nodeOrArray)) {
-            for (const c of nodeOrArray) cleanup(c);
-        } else if (nodeOrArray instanceof Node && nodeOrArray.parentNode === parent) {
-            parent.removeChild(nodeOrArray);
+    // Cleanup previous nodes
+    if (current != null) {
+        if (Array.isArray(current)) {
+            for (let i = 0; i < current.length; i++) {
+                const c = current[i];
+                if (c instanceof Node && c.parentNode) c.parentNode.removeChild(c);
+            }
+        } else if (current instanceof Node && current.parentNode) {
+            current.parentNode.removeChild(current);
         }
     }
-    cleanup(current);
 
     if (child == null || typeof child === 'boolean') {
         return null;
@@ -37,10 +38,10 @@ export function insert(parent: Node, child: any, anchor: Node | null = null, cur
 
     if (Array.isArray(child)) {
         const nodes: any[] = [];
-        for (const item of child) {
-            const inserted = insert(parent, item, anchor);
+        for (let i = 0; i < child.length; i++) {
+            const inserted = insert(parent, child[i], anchor);
             if (Array.isArray(inserted)) {
-                nodes.push(...inserted);
+                for (let j = 0; j < inserted.length; j++) nodes.push(inserted[j]);
             } else if (inserted != null) {
                 nodes.push(inserted);
             }
@@ -142,22 +143,26 @@ export function renderList<T>(
         let moved = false;
         let maxOldIndex = 0;
 
+        // Build O(1) lookup for old key positions
+        const oldKeyIndex = new Map<any, number>();
+        for (let i = 0; i < oldLen; i++) {
+            oldKeyIndex.set(oldKeys[i], i);
+        }
+
         for (let i = 0; i < newLen; i++) {
             const key = newKeys[i];
             const existing = oldKeyToItem.get(key);
 
             if (existing) {
                 newKeyToItem.set(key, existing);
-                // Find old index
-                const oldIdx = oldKeys.indexOf(key);
-                newIndexToOldIndex[i] = oldIdx + 1; // +1 to distinguish from 0 (unmatched)
+                const oldIdx = oldKeyIndex.get(key)!;
+                newIndexToOldIndex[i] = oldIdx + 1;
                 if (oldIdx >= maxOldIndex) {
                     maxOldIndex = oldIdx;
                 } else {
                     moved = true;
                 }
             } else {
-                // New item, needs to be created
                 const node = renderFn(newItems[i], i);
                 newKeyToItem.set(key, { node, dispose: null });
                 newIndexToOldIndex[i] = 0;

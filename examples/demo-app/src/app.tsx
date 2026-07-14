@@ -1,5 +1,17 @@
+import { state, effect, derived, batch, Portal, mount, renderList, Route, Link, currentPath, createContext, useContext, store } from 'frames';
 import './style.css';
-import { state, derived, effect, store, insert, mount, renderList, Route, Link, currentPath, createContext, useContext } from 'frames';
+
+// ─── STORES & STATE ──────────────────────────────────────────────────────────
+
+const todos = state<{id: number, text: string, completed: boolean}[]>([
+    { id: 1, text: 'Learn JSX Compiler', completed: true },
+    { id: 2, text: 'Build Reactivity System', completed: true },
+    { id: 3, text: 'Master the DOM', completed: false }
+]);
+let nextId = 4;
+
+const filter = state<'all' | 'active' | 'completed'>('all');
+const isModalOpen = state(false);
 
 // ─── Theme Context ───────────────────────────────────────────────────────────
 
@@ -101,8 +113,27 @@ function TodosPage() {
                 <div class="todo-input-row">
                     <input id="todo-input" class="todo-input" placeholder="What needs to be done?" onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter') addTodo(); }} />
                     <button class="btn-primary" onClick={addTodo}>Add Task</button>
+                    <button class="btn-secondary" onClick={() => {
+                        const newTodos = [];
+                        for(let i = 0; i < 500; i++) {
+                            newTodos.push({ id: nextId++, text: `Stress Test Item ${i}` });
+                        }
+                        todos.value = [...todos.value, ...newTodos];
+                    }}>Add 500 (Stress Test)</button>
+                    <button class="btn-secondary" onClick={() => isModalOpen.value = true}>Open Portal Modal</button>
                 </div>
                 <div id="todo-list-container"></div>
+                {() => isModalOpen.value ? (
+                    <Portal>
+                        <div class="modal-overlay" onClick={() => isModalOpen.value = false}>
+                            <div class="modal-content" onClick={(e: MouseEvent) => e.stopPropagation()}>
+                                <h2>I'm in a Portal!</h2>
+                                <p>This modal is rendered directly into <code>document.body</code> instead of the app root. It maintains full reactivity!</p>
+                                <button class="btn-primary" onClick={() => isModalOpen.value = false}>Close Modal</button>
+                            </div>
+                        </div>
+                    </Portal>
+                ) : null}
             </div>
         </div>
     );

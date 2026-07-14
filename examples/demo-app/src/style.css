@@ -140,8 +140,9 @@ body.theme-light .subtitle { color: var(--text-secondary-light); }
 .card {
   background: var(--card-bg-dark);
   border: 1px solid var(--card-border-dark);
-  border-radius: 20px;
-  padding: 2rem;
+  border-radius: 400px;
+  corner-shape: squircle;
+  padding: 3rem;
   margin-bottom: 1.5rem;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -359,4 +360,57 @@ body.theme-light .json-preview {
   background: #f1f5f9;
   border-color: var(--card-border-light);
   color: #6d28d9;
+}
+
+/* Modal / Portal Styles */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.modal-content {
+    background: var(--card-bg-dark);
+    padding: 2rem;
+    border-radius: 20px;
+    border: 1px solid var(--card-border-dark);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+    max-width: 400px;
+    width: 90%;
+    text-align: center;
+    animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+body.theme-light .modal-content {
+    background: var(--card-bg-light);
+    border-color: var(--card-border-light);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+}
+
+.modal-content h2 {
+    margin-top: 0;
+    color: #818cf8;
+}
+
+.modal-content p {
+    color: var(--text-secondary-dark);
+    margin-bottom: 1.5rem;
+}
+
+body.theme-light .modal-content p {
+    color: var(--text-secondary-light);
+}
+
+@keyframes slideUp {
+    from { transform: translateY(20px) scale(0.95); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
 }

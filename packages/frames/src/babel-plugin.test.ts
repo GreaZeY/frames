@@ -21,8 +21,9 @@ describe('frames babel plugin', () => {
     });
 
     it('compiles attributes', () => {
-        const out = compile('const a = <div id="test" />;');
-        expect(out).toContain('.setAttribute("id", "test")');
+        const out = compile('const a = <div id="test" data-custom="yes" />;');
+        expect(out).toContain('.id = "test"'); // Direct prop assignment
+        expect(out).toContain('.setAttribute("data-custom", "yes")'); // Fallback for unknown
     });
 
     it('compiles dynamic properties', () => {
@@ -32,7 +33,8 @@ describe('frames babel plugin', () => {
 
     it('compiles event listeners', () => {
         const out = compile('const a = <button onClick={() => {}} />;');
-        expect(out).toContain('.addEventListener("click",');
+        expect(out).toContain('.$$click = ');
+        expect(out).toContain('_delegateEvent("click")');
     });
 
     it('compiles text children', () => {

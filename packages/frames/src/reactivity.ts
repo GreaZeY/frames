@@ -14,6 +14,15 @@ export function effect(fn: () => void): () => void {
     const subscriptions = new Set<Set<() => void>>();
 
     const effectFn = () => {
+        // Run cleanups from the previous execution
+        const cleanups = cleanupMap.get(effectFn);
+        if (cleanups) {
+            for (const c of cleanups) {
+                c();
+            }
+            cleanupMap.set(effectFn, []);
+        }
+
         // Clear old subscriptions so stale dependencies are dropped
         for (const depSet of subscriptions) {
             depSet.delete(effectFn);
@@ -37,6 +46,13 @@ export function effect(fn: () => void): () => void {
 
     // Return a dispose function
     return () => {
+        const cleanups = cleanupMap.get(effectFn);
+        if (cleanups) {
+            for (const c of cleanups) {
+                c();
+            }
+            cleanupMap.delete(effectFn);
+        }
         for (const depSet of subscriptions) {
             depSet.delete(effectFn);
         }
@@ -61,10 +77,16 @@ export function state<T>(initialValue: T): Signal<T> {
         set value(newValue: T) {
             if (!Object.is(_value, newValue)) {
                 _value = newValue;
-                // Batch: copy to prevent issues if a subscriber modifies the set
+                // MUST copy to prevent infinite loops because effects re-subscribe synchronously
                 const toRun = [...subscribers];
-                for (const sub of toRun) {
-                    sub();
+                if (batchDepth > 0) {
+                    for (const sub of toRun) {
+                        batchQueue.add(sub);
+                    }
+                } else {
+                    for (const sub of toRun) {
+                        sub();
+                    }
                 }
             }
         }
@@ -81,8 +103,14 @@ export function derived<T>(fn: () => T): { readonly value: T } {
         if (!dirty) {
             dirty = true;
             const toRun = [...subscribers];
-            for (const sub of toRun) {
-                sub();
+            if (batchDepth > 0) {
+                for (const sub of toRun) {
+                    batchQueue.add(sub);
+                }
+            } else {
+                for (const sub of toRun) {
+                    sub();
+                }
             }
         }
     };

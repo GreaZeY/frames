@@ -1,6 +1,23 @@
 import { types as t } from '@babel/core';
 import type { PluginObject, NodePath } from '@babel/core';
 
+const PROP_ALIASES: Record<string, string> = {
+    class: 'className',
+    for: 'htmlFor',
+};
+
+const DIRECT_PROPS = new Set([
+    'id', 'className', 'htmlFor', 'value', 'checked', 'disabled',
+    'hidden', 'readOnly', 'required', 'selected', 'multiple',
+    'textContent', 'innerHTML', 'tabIndex', 'draggable',
+    'contentEditable', 'spellcheck', 'autofocus', 'placeholder',
+    'src', 'href', 'alt', 'title', 'type', 'name', 'role',
+]);
+
+const NON_BUBBLING = new Set([
+    'mouseenter', 'mouseleave', 'load', 'unload', 'scroll', 'focus', 'blur', 'error'
+]);
+
 function getRuntimeId(path: NodePath, state: any, name: string): t.Identifier {
     if (!state.framesRuntime) state.framesRuntime = {};
     if (!state.framesRuntime[name]) {
@@ -16,6 +33,11 @@ function getRuntimeId(path: NodePath, state: any, name: string): t.Identifier {
         );
     }
     return state.framesRuntime[name];
+}
+
+function resolveAttrName(raw: string): { prop: string; isDirect: boolean } {
+    const mapped = PROP_ALIASES[raw] || raw;
+    return { prop: mapped, isDirect: DIRECT_PROPS.has(mapped) };
 }
 
 export default function framesBabelPlugin(): PluginObject {
@@ -64,10 +86,8 @@ export default function framesBabelPlugin(): PluginObject {
         const isComponent = /^[A-Z]/.test(tagName);
 
         if (isComponent) {
-            // Compile to Component({ props })
             const props: t.ObjectProperty[] = [];
 
-            // 1. Attributes -> Props
             for (const attr of openingElement.attributes) {
                 if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
                     const attrName = attr.name.name;
@@ -87,7 +107,6 @@ export default function framesBabelPlugin(): PluginObject {
                 }
             }
 
-            // 2. Children -> children prop
             const childrenExprs: t.Expression[] = [];
             for (let childPath of path.get('children')) {
                 const childNode = childPath.node;
@@ -114,23 +133,25 @@ export default function framesBabelPlugin(): PluginObject {
             return;
         }
 
-        // --- Standard HTML Element Compilation ---
         const insertId = getRuntimeId(path, state, "insert");
         const effectId = getRuntimeId(path, state, "effect");
+        const delegateId = getRuntimeId(path, state, "delegateEvent");
 
-        const statements: t.Statement[] = [];
         const elVar = path.scope.generateUidIdentifier("el");
+        const exprs: t.Expression[] = [];
+
+        const scopeBlock = path.scope.getBlockParent();
+        (scopeBlock as any).push({ id: t.cloneNode(elVar), init: null, kind: 'var' as const });
         
-        statements.push(
-          t.variableDeclaration("const", [
-            t.variableDeclarator(
-              elVar,
-              t.callExpression(
-                t.memberExpression(t.identifier("document"), t.identifier("createElement")),
-                [t.stringLiteral(tagName)]
-              )
+        exprs.push(
+            t.assignmentExpression(
+                "=",
+                t.cloneNode(elVar),
+                t.callExpression(
+                    t.memberExpression(t.identifier("document"), t.identifier("createElement")),
+                    [t.stringLiteral(tagName)]
+                )
             )
-          ])
         );
         
         for (const attr of openingElement.attributes) {
@@ -139,38 +160,59 @@ export default function framesBabelPlugin(): PluginObject {
                 const attrValue = attr.value;
                 
                 if (t.isStringLiteral(attrValue)) {
-                    statements.push(
-                        t.expressionStatement(
-                            t.callExpression(
-                                t.memberExpression(elVar, t.identifier("setAttribute")),
-                                [t.stringLiteral(attrName), attrValue]
-                            )
-                        )
-                    );
-                } else if (t.isJSXExpressionContainer(attrValue)) {
-                    if (attrName.startsWith('on')) {
-                        const eventName = attrName.toLowerCase().substring(2);
-                        statements.push(
-                            t.expressionStatement(
-                                t.callExpression(
-                                    t.memberExpression(elVar, t.identifier("addEventListener")),
-                                    [t.stringLiteral(eventName), attrValue.expression as t.Expression]
-                                )
+                    const { prop, isDirect } = resolveAttrName(attrName);
+                    if (isDirect) {
+                        exprs.push(
+                            t.assignmentExpression(
+                                "=",
+                                t.memberExpression(t.cloneNode(elVar), t.identifier(prop)),
+                                attrValue
                             )
                         );
                     } else {
+                        exprs.push(
+                            t.callExpression(
+                                t.memberExpression(t.cloneNode(elVar), t.identifier("setAttribute")),
+                                [t.stringLiteral(attrName), attrValue]
+                            )
+                        );
+                    }
+                } else if (t.isJSXExpressionContainer(attrValue)) {
+                    if (attrName.startsWith('on')) {
+                        const eventName = attrName.toLowerCase().substring(2);
+                        if (NON_BUBBLING.has(eventName)) {
+                            // Non-bubbling events attach directly
+                            exprs.push(
+                                t.callExpression(
+                                    t.memberExpression(t.cloneNode(elVar), t.identifier("addEventListener")),
+                                    [t.stringLiteral(eventName), attrValue.expression as t.Expression]
+                                )
+                            );
+                        } else {
+                            // Bubbling events use global delegation
+                            exprs.push(
+                                t.assignmentExpression(
+                                    "=",
+                                    t.memberExpression(t.cloneNode(elVar), t.identifier(`$$${eventName}`)),
+                                    attrValue.expression as t.Expression
+                                )
+                            );
+                            exprs.push(
+                                t.callExpression(delegateId, [t.stringLiteral(eventName)])
+                            );
+                        }
+                    } else {
+                        const { prop } = resolveAttrName(attrName);
                         const updateExpr = t.assignmentExpression(
                             "=",
-                            t.memberExpression(elVar, t.identifier(attrName)),
+                            t.memberExpression(t.cloneNode(elVar), t.identifier(prop)),
                             attrValue.expression as t.Expression
                         );
                         
-                        statements.push(
-                            t.expressionStatement(
-                                t.callExpression(
-                                    effectId,
-                                    [t.arrowFunctionExpression([], updateExpr)]
-                                )
+                        exprs.push(
+                            t.callExpression(
+                                effectId,
+                                [t.arrowFunctionExpression([], updateExpr)]
                             )
                         );
                     }
@@ -184,52 +226,41 @@ export default function framesBabelPlugin(): PluginObject {
             if (t.isJSXText(childNode)) {
                 const text = childNode.value.trim();
                 if (text) {
-                    statements.push(
-                        t.expressionStatement(
-                            t.callExpression(
-                                t.memberExpression(elVar, t.identifier("appendChild")),
-                                [
-                                    t.callExpression(
-                                        t.memberExpression(t.identifier("document"), t.identifier("createTextNode")),
-                                        [t.stringLiteral(text)]
-                                    )
-                                ]
-                            )
+                    exprs.push(
+                        t.callExpression(
+                            t.memberExpression(t.cloneNode(elVar), t.identifier("appendChild")),
+                            [
+                                t.callExpression(
+                                    t.memberExpression(t.identifier("document"), t.identifier("createTextNode")),
+                                    [t.stringLiteral(text)]
+                                )
+                            ]
                         )
                     );
                 }
             } else if (t.isJSXElement(childNode) || t.isJSXFragment(childNode)) {
-                statements.push(
-                    t.expressionStatement(
-                        t.callExpression(
-                            insertId,
-                            [elVar, childNode as unknown as t.Expression]
-                        )
+                exprs.push(
+                    t.callExpression(
+                        insertId,
+                        [t.cloneNode(elVar), childNode as unknown as t.Expression]
                     )
                 );
             } else if (t.isJSXExpressionContainer(childNode)) {
-                statements.push(
-                    t.expressionStatement(
-                        t.callExpression(
-                            insertId,
-                            [
-                                elVar,
-                                t.arrowFunctionExpression([], childNode.expression as t.Expression)
-                            ]
-                        )
+                exprs.push(
+                    t.callExpression(
+                        insertId,
+                        [
+                            t.cloneNode(elVar),
+                            t.arrowFunctionExpression([], childNode.expression as t.Expression)
+                        ]
                     )
                 );
             }
         }
         
-        statements.push(t.returnStatement(elVar));
+        exprs.push(t.cloneNode(elVar));
         
-        path.replaceWith(
-            t.callExpression(
-                t.arrowFunctionExpression([], t.blockStatement(statements)),
-                []
-            )
-        );
+        path.replaceWith(t.sequenceExpression(exprs));
       }
     }
   };
