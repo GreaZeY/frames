@@ -1,11 +1,28 @@
 import { types as t } from '@babel/core';
 import type { PluginObject, NodePath } from '@babel/core';
 
+function getRuntimeId(path: NodePath, state: any, name: string): t.Identifier {
+    if (!state.framesRuntime) state.framesRuntime = {};
+    if (!state.framesRuntime[name]) {
+        const programPath = path.findParent(p => p.isProgram()) as NodePath<t.Program>;
+        const id = programPath.scope.generateUidIdentifier(name);
+        state.framesRuntime[name] = id;
+        
+        programPath.node.body.unshift(
+            t.importDeclaration(
+                [t.importSpecifier(id, t.identifier(name))],
+                t.stringLiteral("frames")
+            )
+        );
+    }
+    return state.framesRuntime[name];
+}
+
 export default function framesBabelPlugin(): PluginObject {
   return {
     name: 'frames-jsx-compiler',
     visitor: {
-      JSXFragment(path: NodePath<t.JSXFragment>) {
+      JSXFragment(path: NodePath<t.JSXFragment>, state: any) {
         const childrenExprs: t.Expression[] = [];
         for (let childPath of path.get('children')) {
             const childNode = childPath.node;
@@ -22,7 +39,7 @@ export default function framesBabelPlugin(): PluginObject {
         }
         path.replaceWith(t.arrayExpression(childrenExprs));
       },
-      JSXElement(path: NodePath<t.JSXElement>) {
+      JSXElement(path: NodePath<t.JSXElement>, state: any) {
         const openingElement = path.node.openingElement;
         
         let tagName = "";
@@ -59,7 +76,6 @@ export default function framesBabelPlugin(): PluginObject {
                     if (t.isStringLiteral(attrValue)) {
                         props.push(t.objectProperty(t.identifier(attrName), attrValue));
                     } else if (t.isJSXExpressionContainer(attrValue)) {
-                        // For reactive props, we use a getter: get prop() { return expr }
                         const getter = t.objectMethod(
                             "get",
                             t.identifier(attrName),
@@ -83,15 +99,12 @@ export default function framesBabelPlugin(): PluginObject {
                 } else if (t.isJSXElement(childNode) || t.isJSXFragment(childNode)) {
                     childrenExprs.push(childNode as unknown as t.Expression);
                 } else if (t.isJSXExpressionContainer(childNode)) {
-                    // Wrap dynamic children in a getter function so they are reactive
                     childrenExprs.push(t.arrowFunctionExpression([], childNode.expression as t.Expression));
                 }
             }
 
             if (childrenExprs.length > 0) {
                 const childrenValue = childrenExprs.length === 1 ? childrenExprs[0] : t.arrayExpression(childrenExprs);
-                // Wrap children in a getter function so they execute INSIDE the component,
-                // crucial for things like <Context.Provider> to set up state before children run.
                 const lazyChildren = t.arrowFunctionExpression([], childrenValue);
                 props.push(t.objectProperty(t.identifier("children"), lazyChildren));
             }
@@ -102,6 +115,9 @@ export default function framesBabelPlugin(): PluginObject {
         }
 
         // --- Standard HTML Element Compilation ---
+        const insertId = getRuntimeId(path, state, "insert");
+        const effectId = getRuntimeId(path, state, "effect");
+
         const statements: t.Statement[] = [];
         const elVar = path.scope.generateUidIdentifier("el");
         
@@ -143,7 +159,6 @@ export default function framesBabelPlugin(): PluginObject {
                             )
                         );
                     } else {
-                        // Reactive property binding: effect(() => _el[attrName] = expr)
                         const updateExpr = t.assignmentExpression(
                             "=",
                             t.memberExpression(elVar, t.identifier(attrName)),
@@ -153,7 +168,7 @@ export default function framesBabelPlugin(): PluginObject {
                         statements.push(
                             t.expressionStatement(
                                 t.callExpression(
-                                    t.identifier("effect"),
+                                    effectId,
                                     [t.arrowFunctionExpression([], updateExpr)]
                                 )
                             )
@@ -187,7 +202,7 @@ export default function framesBabelPlugin(): PluginObject {
                 statements.push(
                     t.expressionStatement(
                         t.callExpression(
-                            t.identifier("insert"),
+                            insertId,
                             [elVar, childNode as unknown as t.Expression]
                         )
                     )
@@ -196,7 +211,7 @@ export default function framesBabelPlugin(): PluginObject {
                 statements.push(
                     t.expressionStatement(
                         t.callExpression(
-                            t.identifier("insert"),
+                            insertId,
                             [
                                 elVar,
                                 t.arrowFunctionExpression([], childNode.expression as t.Expression)

@@ -1,10 +1,7 @@
 import './style.css';
 import { state, derived, effect, store, insert, mount, renderList, Route, Link, createContext, useContext } from 'frames';
 
-// Expose to compiled JSX
-(window as any).insert = insert;
-(window as any).effect = effect;
-
+// Main App Entry Point
 // ─── Theme Context ───────────────────────────────────────────────────────────
 
 const ThemeContext = createContext(state('dark'));
