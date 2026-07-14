@@ -1,3 +1,4 @@
+import './style.css';
 import { state, derived, effect, store, insert, mount, renderList, Route, Link, createContext, useContext } from 'frames';
 
 // Expose to compiled JSX
