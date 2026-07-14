@@ -1,0 +1,16 @@
+{
+  "name": "vite-plugin-frames",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "dependencies": {
+    "frames": "*"
+  },
+  "devDependencies": {
+    "vite": "^6.0.7",
+    "@babel/core": "^8.0.1",
+    "@babel/plugin-syntax-jsx": "^8.0.1",
+    "@babel/preset-typescript": "^8.0.1"
+  }
+}
