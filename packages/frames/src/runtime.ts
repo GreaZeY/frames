@@ -12,13 +12,20 @@ export function insert(parent: Node, child: any, anchor: Node | null = null, cur
 
     // Cleanup previous nodes
     if (current != null) {
+        let toRemove: any[] = [];
         if (Array.isArray(current)) {
-            for (let i = 0; i < current.length; i++) {
-                const c = current[i];
-                if (c instanceof Node && c.parentNode) c.parentNode.removeChild(c);
+            toRemove = current;
+        } else if (current instanceof Node) {
+            toRemove = [current];
+        } else if (typeof current === 'object' && current.nodes) {
+            toRemove = current.nodes;
+        }
+
+        for (let i = 0; i < toRemove.length; i++) {
+            const c = toRemove[i];
+            if (c instanceof Node && c.parentNode) {
+                c.parentNode.removeChild(c);
             }
-        } else if (current instanceof Node && current.parentNode) {
-            current.parentNode.removeChild(current);
         }
     }
 
@@ -29,11 +36,21 @@ export function insert(parent: Node, child: any, anchor: Node | null = null, cur
     if (child instanceof Promise) {
         const placeholder = document.createComment("async");
         parent.insertBefore(placeholder, anchor);
+        const ref = { nodes: [placeholder] as any[] };
 
         child.then(resolvedChild => {
-            insert(parent, resolvedChild, anchor, placeholder);
+            if (placeholder.parentNode) {
+                const res = insert(parent, resolvedChild, anchor, placeholder);
+                if (Array.isArray(res)) {
+                    ref.nodes = res;
+                } else if (typeof res === 'object' && res !== null && res.nodes) {
+                    ref.nodes = res.nodes;
+                } else if (res != null) {
+                    ref.nodes = [res];
+                }
+            }
         });
-        return placeholder;
+        return ref;
     }
 
     if (Array.isArray(child)) {

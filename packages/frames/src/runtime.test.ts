@@ -65,6 +65,29 @@ describe('insert', () => {
         toggle.value = false;
         expect(parent.textContent).toBe('OFF');
     });
+
+    it('cleans up resolved async Promise content when reactive expression changes', async () => {
+        const parent = document.createElement('div');
+        const view = state<'async' | 'none'>('async');
+
+        let resolve!: (val: any) => void;
+        const promise = new Promise(r => { resolve = r; });
+
+        insert(parent, () => view.value === 'async' ? promise : null);
+        expect(parent.childNodes[0].nodeType).toBe(Node.COMMENT_NODE);
+
+        const childEl = document.createElement('span');
+        childEl.textContent = 'Async Page';
+        resolve(childEl);
+        await new Promise(r => setTimeout(r, 0));
+
+        expect(parent.textContent).toBe('Async Page');
+
+        // Switch route / view to 'none'
+        view.value = 'none';
+        expect(parent.textContent).toBe('');
+        expect(parent.children.length).toBe(0);
+    });
 });
 
 describe('renderList (keyed reconciliation)', () => {

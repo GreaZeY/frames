@@ -1,0 +1,19 @@
+{
+  "name": "benchmark",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "frames": "*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.7",
+    "vite-plugin-frames": "*",
+    "@vitejs/plugin-react": "^4.5.2"
+  }
+}

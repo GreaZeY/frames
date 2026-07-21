@@ -9,3 +9,4 @@ export { createContext, useContext } from './context';
 export { Portal } from './portal';
 export type { Context } from './context';
 export { store, unwrap } from './store';
+export { lazy } from './lazy';
