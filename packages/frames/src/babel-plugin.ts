@@ -158,7 +158,7 @@ export default function framesBabelPlugin(): PluginObject {
 
         const insertId = getRuntimeId(path, state, "insert");
         const effectId = getRuntimeId(path, state, "effect");
-        const delegateId = getRuntimeId(path, state, "delegateEvent");
+        const bindEventId = getRuntimeId(path, state, "bindEvent");
         const setPropertyId = getRuntimeId(path, state, "setProperty");
 
         const elVar = path.scope.generateUidIdentifier("el");
@@ -218,6 +218,15 @@ export default function framesBabelPlugin(): PluginObject {
 
                 if (hasSpread && !attrName.startsWith('on')) continue;
 
+                if (attrName === 'ref' && t.isJSXExpressionContainer(attrValue)) {
+                    const bindRefId = getRuntimeId(path, state, "bindRef");
+                    exprs.push(t.callExpression(bindRefId, [
+                        t.cloneNode(elVar),
+                        t.arrowFunctionExpression([], attrValue.expression as t.Expression),
+                    ]));
+                    continue;
+                }
+
                 if (attrValue == null) {
                     exprs.push(t.callExpression(setPropertyId, [
                         t.cloneNode(elVar),
@@ -244,27 +253,12 @@ export default function framesBabelPlugin(): PluginObject {
                 } else if (t.isJSXExpressionContainer(attrValue)) {
                     if (attrName.startsWith('on')) {
                         const eventName = attrName.toLowerCase().substring(2);
-                        if (NON_BUBBLING.has(eventName)) {
-                            // Non-bubbling events attach directly
-                            exprs.push(
-                                t.callExpression(
-                                    t.memberExpression(t.cloneNode(elVar), t.identifier("addEventListener")),
-                                    [t.stringLiteral(eventName), attrValue.expression as t.Expression]
-                                )
-                            );
-                        } else {
-                            // Bubbling events use global delegation
-                            exprs.push(
-                                t.assignmentExpression(
-                                    "=",
-                                    t.memberExpression(t.cloneNode(elVar), t.identifier(`$$${eventName}`)),
-                                    attrValue.expression as t.Expression
-                                )
-                            );
-                            exprs.push(
-                                t.callExpression(delegateId, [t.stringLiteral(eventName)])
-                            );
-                        }
+                        exprs.push(t.callExpression(bindEventId, [
+                            t.cloneNode(elVar),
+                            t.stringLiteral(eventName),
+                            t.arrowFunctionExpression([], attrValue.expression as t.Expression),
+                            t.booleanLiteral(!NON_BUBBLING.has(eventName)),
+                        ]));
                     } else {
                         exprs.push(
                             t.callExpression(

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { state, effect, derived, batch } from './reactivity';
+import { state, effect, derived, batch, createRoot, onMount, uniqueId, untrack } from './reactivity';
 
 describe('state', () => {
     it('holds and updates a value', () => {
@@ -154,5 +154,40 @@ describe('batch', () => {
 
         expect(spy).toHaveBeenCalledTimes(2);
         expect(spy).toHaveLastReturnedWith(7);
+    });
+});
+
+describe('lifecycle utilities', () => {
+    it('reads signals without subscribing through untrack', () => {
+        const value = state(1);
+        let runs = 0;
+        effect(() => {
+            runs++;
+            untrack(() => value.value);
+        });
+
+        value.value = 2;
+        expect(runs).toBe(1);
+    });
+
+    it('runs mount cleanup when its owner is disposed', async () => {
+        let mounted = false;
+        let cleaned = false;
+        const dispose = createRoot(disposeRoot => {
+            onMount(() => {
+                mounted = true;
+                return () => { cleaned = true; };
+            });
+            return disposeRoot;
+        });
+
+        await Promise.resolve();
+        expect(mounted).toBe(true);
+        dispose();
+        expect(cleaned).toBe(true);
+    });
+
+    it('creates stable unique strings', () => {
+        expect(uniqueId('field')).not.toBe(uniqueId('field'));
     });
 });

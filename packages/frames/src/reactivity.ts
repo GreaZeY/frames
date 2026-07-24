@@ -1,7 +1,12 @@
 import { _captureContext, _runWithContext } from './context';
 
 type SubscriptionSet = Set<Subscriber>;
-type Subscriber = (() => void) & { __subscriptions?: Set<SubscriptionSet> };
+type ErrorHandler = (error: unknown) => void;
+type SuspenseHandler = (promise: Promise<unknown>) => void;
+type Subscriber = (() => void) & {
+    __subscriptions?: Set<SubscriptionSet>;
+    __owner?: Owner;
+};
 
 let activeEffect: Subscriber | null = null;
 const effectStack: Subscriber[] = [];
@@ -15,6 +20,10 @@ function runSubscriber(subscriber: Subscriber) {
     runningSubscribers.add(subscriber);
     try {
         subscriber();
+    } catch (error) {
+        const handler = subscriber.__owner?.errorHandler;
+        if (handler) handler(error);
+        else throw error;
     } finally {
         runningSubscribers.delete(subscriber);
     }
@@ -50,21 +59,30 @@ interface Owner {
     parent: Owner | null;
     children: Set<Owner>;
     cleanups: Set<() => void>;
+    errorHandler: ErrorHandler | null;
+    suspenseHandler: SuspenseHandler | null;
     disposed: boolean;
 }
 
 export interface ScopeSnapshot {
     readonly owner: Owner | null;
     readonly context: ReturnType<typeof _captureContext>;
+    readonly errorHandler: ErrorHandler | null;
+    readonly suspenseHandler: SuspenseHandler | null;
 }
 
 let activeOwner: Owner | null = null;
+let activeErrorHandler: ErrorHandler | null = null;
+let activeSuspenseHandler: SuspenseHandler | null = null;
+let nextId = 0;
 
 function createOwner(parent: Owner | null): Owner {
     const owner: Owner = {
         parent,
         children: new Set(),
         cleanups: new Set(),
+        errorHandler: activeErrorHandler ?? parent?.errorHandler ?? null,
+        suspenseHandler: activeSuspenseHandler ?? parent?.suspenseHandler ?? null,
         disposed: false,
     };
     parent?.children.add(owner);
@@ -95,7 +113,12 @@ function runWithOwner<T>(owner: Owner, fn: () => T): T {
 
 /** @internal */
 export function _captureScope(): ScopeSnapshot {
-    return { owner: activeOwner, context: _captureContext() };
+    return {
+        owner: activeOwner,
+        context: _captureContext(),
+        errorHandler: activeErrorHandler ?? activeOwner?.errorHandler ?? null,
+        suspenseHandler: activeSuspenseHandler ?? activeOwner?.suspenseHandler ?? null,
+    };
 }
 
 /** @internal */
@@ -106,17 +129,63 @@ export function _isScopeActive(scope: ScopeSnapshot): boolean {
 /** @internal */
 export function _runInScope<T>(scope: ScopeSnapshot, fn: () => T): T {
     const previousOwner = activeOwner;
+    const previousErrorHandler = activeErrorHandler;
+    const previousSuspenseHandler = activeSuspenseHandler;
     activeOwner = scope.owner;
+    activeErrorHandler = scope.errorHandler;
+    activeSuspenseHandler = scope.suspenseHandler;
     try {
         return _runWithContext(scope.context, fn);
     } finally {
         activeOwner = previousOwner;
+        activeErrorHandler = previousErrorHandler;
+        activeSuspenseHandler = previousSuspenseHandler;
     }
+}
+
+/** @internal */
+export function _withErrorHandler<T>(handler: ErrorHandler, fn: () => T): T {
+    const previous = activeErrorHandler;
+    activeErrorHandler = handler;
+    if (activeOwner) activeOwner.errorHandler = handler;
+    try {
+        return fn();
+    } finally {
+        activeErrorHandler = previous;
+    }
+}
+
+/** @internal */
+export function _withSuspenseHandler<T>(handler: SuspenseHandler, fn: () => T): T {
+    const previous = activeSuspenseHandler;
+    activeSuspenseHandler = handler;
+    if (activeOwner) activeOwner.suspenseHandler = handler;
+    try {
+        return fn();
+    } finally {
+        activeSuspenseHandler = previous;
+    }
+}
+
+/** @internal */
+export function _handleScopeError(scope: ScopeSnapshot, error: unknown) {
+    if (scope.errorHandler) scope.errorHandler(error);
+    else console.error(error);
+}
+
+/** @internal */
+export function _registerSuspense(scope: ScopeSnapshot, promise: Promise<unknown>) {
+    scope.suspenseHandler?.(promise);
 }
 
 export function createRoot<T>(fn: (dispose: () => void) => T): T {
     const owner = createOwner(null);
-    return runWithOwner(owner, () => fn(() => disposeOwner(owner)));
+    try {
+        return runWithOwner(owner, () => fn(() => disposeOwner(owner)));
+    } catch (error) {
+        disposeOwner(owner);
+        throw error;
+    }
 }
 
 /** @internal — used by store.ts to hook into the same tracking system */
@@ -158,6 +227,7 @@ export function effect(fn: () => void): () => void {
 
     // Attach subscription tracking so signals can register themselves
     effectFn.__subscriptions = subscriptions;
+    effectFn.__owner = owner;
 
     owner.cleanups.add(() => {
         for (const depSet of subscriptions) depSet.delete(effectFn);
@@ -258,4 +328,29 @@ export function batch(fn: () => void) {
 
 export function onCleanup(fn: () => void) {
     activeOwner?.cleanups.add(fn);
+}
+
+export function onMount(fn: () => void | (() => void)) {
+    const scope = _captureScope();
+    queueMicrotask(() => {
+        if (!_isScopeActive(scope)) return;
+        _runInScope(scope, () => {
+            const cleanup = fn();
+            if (cleanup) onCleanup(cleanup);
+        });
+    });
+}
+
+export function untrack<T>(fn: () => T): T {
+    const previousEffect = activeEffect;
+    activeEffect = null;
+    try {
+        return fn();
+    } finally {
+        activeEffect = previousEffect;
+    }
+}
+
+export function uniqueId(prefix = 'frames'): string {
+    return `${prefix}-${++nextId}`;
 }

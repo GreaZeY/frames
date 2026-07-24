@@ -4,18 +4,19 @@ Frames is an experimental, zero-dependency frontend framework built in TypeScrip
 
 ## At a glance
 
-- Approximately 2.5 kB gzipped for the complete exported runtime
 - Zero runtime dependencies
-- 45 tests covering reactivity, runtime updates, keyed lists, stores, context, and portals
+- Fine-grained DOM updates without a virtual DOM
+- Tested migration fixture for a routed, async, data-heavy application shell
 - JSX compilation through Babel, exposed as a Vite plugin
 
 ## What it includes
 
-- Signals, effects, derived state, batching, and effect cleanup
+- Signals, effects, derived state, batching, lifecycle, refs, and cleanup
 - A deep proxy store with property-level dependency tracking
 - JSX-to-DOM compilation and delegated browser events
 - Keyed list reconciliation using the longest increasing subsequence algorithm
-- Client-side routing, context, portals, and async component support
+- Nested routing, params, redirects, context, and portals
+- Lazy modules, suspense and error boundaries, resources, queries, and mutations
 
 ## Example
 

@@ -67,4 +67,16 @@ describe('lazy()', () => {
 
         expect(node?.textContent).toBe('dark');
     });
+
+    it('preloads a module without rendering it', async () => {
+        let loads = 0;
+        const LazyComp = lazy(async () => {
+            loads++;
+            return { default: () => document.createTextNode('ready') };
+        });
+
+        await LazyComp.preload();
+        expect(loads).toBe(1);
+        expect((LazyComp({}) as Node).textContent).toBe('ready');
+    });
 });

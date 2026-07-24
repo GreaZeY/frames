@@ -3,6 +3,9 @@ import type { SyncRenderable } from './runtime';
 
 type ComponentFn<P, R extends SyncRenderable> = (props: P) => R;
 type ModuleWithDefault<P, R extends SyncRenderable> = { default: ComponentFn<P, R> };
+export type LazyComponent<P, R extends SyncRenderable> = ((props: P) => R | Promise<R | null>) & {
+    preload: () => Promise<void>;
+};
 
 /**
  * Lazily loads a component from a dynamic import.
@@ -23,29 +26,37 @@ type ModuleWithDefault<P, R extends SyncRenderable> = { default: ComponentFn<P, 
  */
 export function lazy<P extends Record<string, unknown>, R extends SyncRenderable>(
     loader: () => Promise<ModuleWithDefault<P, R>>
-): (props: P) => R | Promise<R | null> {
+): LazyComponent<P, R> {
     let cached: ComponentFn<P, R> | null = null;
     let pending: Promise<ModuleWithDefault<P, R>> | null = null;
 
-    return (props: P) => {
+    const load = () => {
+        if (!pending) {
+            pending = loader().then(module => {
+                cached = module.default;
+                return module;
+            }).catch(error => {
+                pending = null;
+                throw error;
+            });
+        }
+        return pending;
+    };
+
+    const component = (props: P) => {
         // Already resolved — call the component synchronously
         if (cached) {
             return cached(props);
         }
 
         // Kick off the import once, share the same promise for concurrent calls
-        if (!pending) {
-            pending = loader().catch(error => {
-                pending = null;
-                throw error;
-            });
-        }
-
         const scope = _captureScope();
-        return pending.then(mod => {
-            cached = mod.default;
+        return load().then(mod => {
             if (!_isScopeActive(scope)) return null;
             return _runInScope(scope, () => cached!(props));
         });
     };
+
+    component.preload = async () => { await load(); };
+    return component;
 }

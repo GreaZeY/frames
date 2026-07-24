@@ -1,6 +1,8 @@
 import {
     _captureScope,
+    _handleScopeError,
     _isScopeActive,
+    _registerSuspense,
     _runInScope,
     createRoot,
     effect,
@@ -8,8 +10,28 @@ import {
     state,
 } from './reactivity';
 import type { Signal } from './reactivity';
+import { bindEvent, isDelegatedEvent } from './events';
 
 const spreadKeys = new WeakMap<Element, Set<string>>();
+
+export type Ref<T> = ((value: T | null) => void) | { current: T | null } | null | undefined;
+
+function writeRef<T>(ref: Ref<T>, value: T | null) {
+    if (typeof ref === 'function') ref(value);
+    else if (ref) ref.current = value;
+}
+
+export function bindRef<T extends Node>(node: T, getRef: () => Ref<T>) {
+    let current: Ref<T>;
+    effect(() => {
+        const next = getRef();
+        if (next === current) return;
+        writeRef(current, null);
+        current = next;
+        writeRef(current, node);
+    });
+    onCleanup(() => writeRef(current, null));
+}
 
 export type SyncRenderable =
     | Node
@@ -65,7 +87,7 @@ export function setProperty(element: Element, name: string, value: unknown) {
         else element.removeAttribute(prop === 'className' ? 'class' : prop === 'htmlFor' ? 'for' : name);
         return;
     }
-    target[prop] = value;
+    if (!Object.is(target[prop], value)) target[prop] = value;
 }
 
 export function setProperties(element: Element, props: Record<string, unknown>) {
@@ -78,7 +100,21 @@ export function setProperties(element: Element, props: Record<string, unknown>) 
 
     const next = new Set(Object.keys(props));
     spreadKeys.set(element, next);
-    for (const name of next) setProperty(element, name, props[name]);
+    for (const name of next) {
+        if (name === 'ref') {
+            bindRef(element, () => props[name] as Ref<Element>);
+        } else if (/^on[A-Z]/.test(name)) {
+            const eventName = name.slice(2).toLowerCase();
+            bindEvent(
+                element,
+                eventName,
+                () => props[name] as ((event: Event) => void) | undefined,
+                isDelegatedEvent(eventName),
+            );
+        } else {
+            setProperty(element, name, props[name]);
+        }
+    }
 }
 
 // ─── DOM Insertion ───────────────────────────────────────────────────────────
@@ -127,6 +163,7 @@ export function insert(parent: Node, child: Renderable, anchor: Node | null = nu
         parent.insertBefore(placeholder, anchor);
         const ref: InsertedGroup = { nodes: [placeholder] };
         const scope = _captureScope();
+        _registerSuspense(scope, child);
         let active = true;
 
         onCleanup(() => {
@@ -149,7 +186,7 @@ export function insert(parent: Node, child: Renderable, anchor: Node | null = nu
             }
         }, error => {
             if (active) placeholder.remove();
-            console.error(error);
+            _handleScopeError(scope, error);
         });
         return ref;
     }
@@ -420,7 +457,7 @@ export function renderList<T, K>(
 
 // ─── Mount ───────────────────────────────────────────────────────────────────
 
-export function mount(component: () => Node, container: string | Element) {
+export function mount(component: () => Renderable, container: string | Element) {
     const root = typeof container === 'string' ? document.querySelector(container) : container;
     if (!root) throw new Error(`Mount target not found: ${container}`);
     root.textContent = '';

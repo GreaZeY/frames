@@ -77,4 +77,14 @@ describe('Context API', () => {
         count.value = 1;
         expect(values).toEqual(['dark', 'dark']);
     });
+
+    it('preserves provider values in deferred children', () => {
+        const ThemeContext = createContext('light');
+        const child = ThemeContext.Provider({
+            value: 'dark',
+            children: () => () => useContext(ThemeContext),
+        });
+
+        expect(child()).toBe('dark');
+    });
 });

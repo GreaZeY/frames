@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
 import { state, effect, onCleanup } from './reactivity';
-import { getSequence, insert, mount, renderList } from './runtime';
+import { getSequence, insert, mount, renderList, setProperty } from './runtime';
 
 describe('getSequence (LIS)', () => {
     it('finds the longest increasing subsequence', () => {
@@ -99,6 +99,17 @@ describe('insert', () => {
         view.value = 'none';
         expect(parent.textContent).toBe('');
         expect(parent.children.length).toBe(0);
+    });
+});
+
+describe('controlled properties', () => {
+    it('does not rewrite an input value when it is already current', () => {
+        const input = document.createElement('input');
+        input.value = 'entry';
+        input.setSelectionRange(2, 2);
+
+        setProperty(input, 'value', 'entry');
+        expect(input.selectionStart).toBe(2);
     });
 });
 

@@ -40,9 +40,11 @@ export function createContext<T>(defaultValue?: T): Context<T | undefined> {
                 context.set(id, props.value);
             }
 
-            return _runWithContext(context, () => {
-                return props.children();
-            });
+            const result = _runWithContext(context, props.children);
+            if (typeof result !== 'function') return result;
+
+            return ((...args: unknown[]) =>
+                _runWithContext(context, () => (result as (...values: unknown[]) => unknown)(...args))) as R;
         }
     };
 }

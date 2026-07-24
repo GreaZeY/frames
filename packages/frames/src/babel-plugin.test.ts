@@ -54,8 +54,28 @@ describe('frames babel plugin', () => {
 
     it('compiles event listeners', () => {
         const out = compile('const a = <button onClick={() => {}} />;');
-        expect(out).toContain('.$$click = ');
-        expect(out).toContain('_delegateEvent("click")');
+        expect(out).toContain('_bindEvent(_el, "click", () =>');
+    });
+
+    it('binds callback and object refs and clears them on disposal', () => {
+        const objectRef = { current: null as HTMLInputElement | null };
+        let callbackValue: HTMLInputElement | null = null;
+        const callbackRef = (value: HTMLInputElement | null) => { callbackValue = value; };
+        let dispose = () => {};
+
+        runtime.createRoot(disposeRoot => {
+            dispose = disposeRoot;
+            execute('<div><input ref={objectRef} /><input ref={callbackRef} /></div>', {
+                objectRef,
+                callbackRef,
+            });
+        });
+
+        expect(objectRef.current).toBeInstanceOf(HTMLInputElement);
+        expect(callbackValue).toBeInstanceOf(HTMLInputElement);
+        dispose();
+        expect(objectRef.current).toBeNull();
+        expect(callbackValue).toBeNull();
     });
 
     it('compiles text children', () => {
@@ -115,5 +135,32 @@ describe('frames babel plugin', () => {
         });
 
         expect(result).toEqual({ label: 'Ready', active: true });
+    });
+
+    it('updates event handlers and refs supplied through spread props', () => {
+        const first = runtime.state(0);
+        const second = runtime.state(0);
+        const ref = { current: null as HTMLButtonElement | null };
+        const props = runtime.state<Record<string, unknown>>({
+            onClick: () => { first.value++; },
+            ref,
+        });
+        let dispose = () => {};
+        const button = runtime.createRoot(disposeRoot => {
+            dispose = disposeRoot;
+            return execute('<button {...props.value}>Save</button>', { props }) as HTMLButtonElement;
+        });
+        document.body.appendChild(button);
+
+        button.click();
+        props.value = { onClick: () => { second.value++; }, ref };
+        button.click();
+
+        expect(first.value).toBe(1);
+        expect(second.value).toBe(1);
+        expect(ref.current).toBe(button);
+        dispose();
+        button.remove();
+        expect(ref.current).toBeNull();
     });
 });
