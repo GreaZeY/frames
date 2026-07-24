@@ -1,9 +1,10 @@
 import { onCleanup } from './reactivity';
 import { insert } from './runtime';
+import type { Renderable } from './runtime';
 
 export interface PortalProps {
     mount?: Node;
-    children?: any;
+    children?: Renderable;
 }
 
 /**

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
-import { state, effect } from './reactivity';
-import { getSequence, insert, renderList } from './runtime';
+import { describe, it, expect, vi } from 'vitest';
+import { state, effect, onCleanup } from './reactivity';
+import { getSequence, insert, mount, renderList } from './runtime';
 
 describe('getSequence (LIS)', () => {
     it('finds the longest increasing subsequence', () => {
@@ -41,7 +41,7 @@ describe('insert', () => {
         const parent = document.createElement('div');
 
         let resolve!: (val: any) => void;
-        const promise = new Promise(r => { resolve = r; });
+        const promise = new Promise<string>(r => { resolve = r; });
 
         insert(parent, promise);
         expect(parent.childNodes[0].nodeType).toBe(Node.COMMENT_NODE);
@@ -66,12 +66,24 @@ describe('insert', () => {
         expect(parent.textContent).toBe('OFF');
     });
 
+    it('updates reactive text without replacing its text node', () => {
+        const parent = document.createElement('div');
+        const value = state('Before');
+
+        insert(parent, () => value.value);
+        const textNode = parent.firstChild;
+        value.value = 'After';
+
+        expect(parent.firstChild).toBe(textNode);
+        expect(textNode?.textContent).toBe('After');
+    });
+
     it('cleans up resolved async Promise content when reactive expression changes', async () => {
         const parent = document.createElement('div');
         const view = state<'async' | 'none'>('async');
 
         let resolve!: (val: any) => void;
-        const promise = new Promise(r => { resolve = r; });
+        const promise = new Promise<Node>(r => { resolve = r; });
 
         insert(parent, () => view.value === 'async' ? promise : null);
         expect(parent.childNodes[0].nodeType).toBe(Node.COMMENT_NODE);
@@ -87,6 +99,112 @@ describe('insert', () => {
         view.value = 'none';
         expect(parent.textContent).toBe('');
         expect(parent.children.length).toBe(0);
+    });
+});
+
+describe('mount ownership', () => {
+    it('disposes mounted effects and cleanups when unmounted', () => {
+        const root = document.createElement('div');
+        const count = state(0);
+        const cleanup = vi.fn();
+        let runs = 0;
+
+        const unmount = mount(() => {
+            onCleanup(cleanup);
+            const element = document.createElement('div');
+            insert(element, () => {
+                runs++;
+                return count.value;
+            });
+            return element;
+        }, root);
+
+        count.value = 1;
+        expect(root.textContent).toBe('1');
+        expect(runs).toBe(2);
+
+        unmount();
+        count.value = 2;
+
+        expect(root.textContent).toBe('');
+        expect(runs).toBe(2);
+        expect(cleanup).toHaveBeenCalledTimes(1);
+
+        unmount();
+        expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it('disposes nested effects when a reactive branch is removed', () => {
+        const root = document.createElement('div');
+        const visible = state(true);
+        const value = state(0);
+        let nestedRuns = 0;
+
+        mount(() => {
+            const host = document.createElement('div');
+            insert(host, () => {
+                if (!visible.value) return null;
+
+                const child = document.createElement('span');
+                effect(() => {
+                    nestedRuns++;
+                    child.textContent = String(value.value);
+                });
+                return child;
+            });
+            return host;
+        }, root);
+
+        expect(nestedRuns).toBe(1);
+        visible.value = false;
+        value.value = 1;
+
+        expect(root.textContent).toBe('');
+        expect(nestedRuns).toBe(1);
+    });
+
+    it('ignores async content resolved after unmount', async () => {
+        const root = document.createElement('div');
+        let resolve!: (value: Node) => void;
+        const pending = new Promise<Node>(done => { resolve = done; });
+        const unmount = mount(() => {
+            const host = document.createElement('div');
+            insert(host, pending);
+            return host;
+        }, root);
+
+        unmount();
+        resolve(document.createTextNode('stale'));
+        await Promise.resolve();
+
+        expect(root.textContent).toBe('');
+    });
+
+    it('leaves no live effects or attached nodes after repeated unmounts', () => {
+        const root = document.createElement('div');
+        const value = state(0);
+        const nodes: Node[] = [];
+        let runs = 0;
+
+        for (let i = 0; i < 100; i++) {
+            const unmount = mount(() => {
+                const element = document.createElement('div');
+                nodes.push(element);
+                insert(element, () => {
+                    runs++;
+                    return value.value;
+                });
+                return element;
+            }, root);
+            unmount();
+        }
+
+        const runsAfterUnmount = runs;
+        value.value++;
+
+        expect(runs).toBe(runsAfterUnmount);
+        expect(root.childNodes).toHaveLength(0);
+        expect(nodes.every(node => node.parentNode === null)).toBe(true);
     });
 });
 
@@ -195,5 +313,22 @@ describe('renderList (keyed reconciliation)', () => {
         expect(parent.children[3]).toBe(originalC);
         // D is also the same node, just moved
         expect(parent.children[0]).toBe(originalD);
+    });
+
+    it('updates same-key item content without replacing its DOM node', () => {
+        const parent = document.createElement('div');
+        const items = state([{ id: 1, text: 'Before' }]);
+
+        renderList(parent, () => items.value, item => item.id, item => {
+            const element = document.createElement('div');
+            insert(element, () => item.text);
+            return element;
+        });
+
+        const originalNode = parent.firstChild;
+        items.value = [{ id: 1, text: 'After' }];
+
+        expect(parent.firstChild).toBe(originalNode);
+        expect(parent.textContent).toBe('After');
     });
 });

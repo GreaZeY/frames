@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { lazy } from './lazy';
 import { insert } from './runtime';
+import { createContext, useContext } from './context';
 
 describe('lazy()', () => {
     it('defers module loading until component execution and caches result', async () => {
@@ -38,5 +39,32 @@ describe('lazy()', () => {
         const res2 = LazyComp({ text: 'World' });
         expect(loadCount).toBe(1); // loadCount stays 1
         expect((res2 as HTMLElement).textContent).toBe('World');
+    });
+
+    it('retries after a failed load', async () => {
+        let attempts = 0;
+        const LazyComp = lazy(async () => {
+            attempts++;
+            if (attempts === 1) throw new Error('offline');
+            return { default: () => document.createTextNode('Ready') };
+        });
+
+        await expect(LazyComp({})).rejects.toThrow('offline');
+        await expect(LazyComp({})).resolves.toHaveProperty('textContent', 'Ready');
+        expect(attempts).toBe(2);
+    });
+
+    it('preserves context while the module loads', async () => {
+        const ThemeContext = createContext('light');
+        const LazyComp = lazy(async () => ({
+            default: () => document.createTextNode(useContext(ThemeContext)!),
+        }));
+
+        const node = await ThemeContext.Provider({
+            value: 'dark',
+            children: () => LazyComp({}),
+        });
+
+        expect(node?.textContent).toBe('dark');
     });
 });

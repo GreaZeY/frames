@@ -11,7 +11,7 @@ export async function framesCreate1000(): Promise<BenchmarkResult> {
                 label: `Item ${i}`
             }))
         );
-        renderList(
+        const dispose = renderList(
             container,
             () => items.value,
             item => item.id,
@@ -28,6 +28,12 @@ export async function framesCreate1000(): Promise<BenchmarkResult> {
                 return row;
             }
         );
+        return {
+            validate: () => {
+                if (container.children.length !== 1000) throw new Error('Frames created an invalid row count');
+            },
+            cleanup: dispose,
+        };
     });
 }
 
@@ -40,7 +46,7 @@ export async function framesUpdate10th(): Promise<BenchmarkResult> {
     }));
     const items = state(data);
 
-    renderList(
+    const dispose = renderList(
         container,
         () => items.value,
         item => item.id,
@@ -48,21 +54,30 @@ export async function framesUpdate10th(): Promise<BenchmarkResult> {
             const row = document.createElement('div');
             row.className = 'row';
             const label = document.createElement('span');
-            label.textContent = item.label;
+            insert(label, () => item.label);
             row.appendChild(label);
             return row;
         }
     );
 
     let round = 0;
-    return benchmark('Update every 10th row', 'frames', () => {
+    const result = await benchmark('Update every 10th row', 'frames', () => {
         round++;
         const newData = data.map((item, i) =>
             i % 10 === 0 ? { ...item, label: `Item ${item.id} !!!${round}` } : item
         );
         data = newData;
         items.value = newData;
+        return {
+            validate: () => {
+                if (container.firstElementChild?.textContent !== data[0].label) {
+                    throw new Error('Frames did not update row content');
+                }
+            },
+        };
     });
+    dispose();
+    return result;
 }
 
 // ─── Benchmark 3: Replace all 1,000 rows ─────────────────────────────────────
@@ -76,7 +91,7 @@ export async function framesReplace1000(): Promise<BenchmarkResult> {
         }))
     );
 
-    renderList(
+    const dispose = renderList(
         container,
         () => items.value,
         item => item.id,
@@ -88,12 +103,19 @@ export async function framesReplace1000(): Promise<BenchmarkResult> {
         }
     );
 
-    return benchmark('Replace 1,000 rows', 'frames', () => {
+    const result = await benchmark('Replace 1,000 rows', 'frames', () => {
         items.value = Array.from({ length: 1000 }, () => ({
             id: id++,
             label: `Item ${id}`
         }));
+        return {
+            validate: () => {
+                if (container.children.length !== 1000) throw new Error('Frames replacement lost rows');
+            },
+        };
     });
+    dispose();
+    return result;
 }
 
 // ─── Benchmark 4: Swap two rows ──────────────────────────────────────────────
@@ -105,7 +127,7 @@ export async function framesSwapRows(): Promise<BenchmarkResult> {
     }));
     const items = state(data);
 
-    renderList(
+    const dispose = renderList(
         container,
         () => items.value,
         item => item.id,
@@ -116,14 +138,23 @@ export async function framesSwapRows(): Promise<BenchmarkResult> {
         }
     );
 
-    return benchmark('Swap rows', 'frames', () => {
+    const result = await benchmark('Swap rows', 'frames', () => {
         const d = [...data];
         const temp = d[1];
         d[1] = d[998];
         d[998] = temp;
         data = d;
         items.value = d;
+        return {
+            validate: () => {
+                if (container.children[1]?.textContent !== data[1].label) {
+                    throw new Error('Frames rendered the wrong row order');
+                }
+            },
+        };
     });
+    dispose();
+    return result;
 }
 
 // ─── Benchmark 5: Remove a row ───────────────────────────────────────────────
@@ -136,7 +167,7 @@ export async function framesRemoveRow(): Promise<BenchmarkResult> {
     }));
     const items = state(data);
 
-    renderList(
+    const dispose = renderList(
         container,
         () => items.value,
         item => item.id,
@@ -148,7 +179,7 @@ export async function framesRemoveRow(): Promise<BenchmarkResult> {
     );
 
     let removeIdx = 0;
-    return benchmark('Remove row', 'frames', () => {
+    const result = await benchmark('Remove row', 'frames', () => {
         // Re-populate if depleted
         if (data.length < 10) {
             data = Array.from({ length: 1000 }, () => ({
@@ -160,7 +191,14 @@ export async function framesRemoveRow(): Promise<BenchmarkResult> {
         const idx = removeIdx++ % data.length;
         data = [...data.slice(0, idx), ...data.slice(idx + 1)];
         items.value = data;
+        return {
+            validate: () => {
+                if (container.children.length !== data.length) throw new Error('Frames removed the wrong row count');
+            },
+        };
     });
+    dispose();
+    return result;
 }
 
 // ─── Benchmark 6: Create 10,000 rows ─────────────────────────────────────────
@@ -173,7 +211,7 @@ export async function framesCreate10000(): Promise<BenchmarkResult> {
                 label: `Item ${i}`
             }))
         );
-        renderList(
+        const dispose = renderList(
             container,
             () => items.value,
             item => item.id,
@@ -184,6 +222,12 @@ export async function framesCreate10000(): Promise<BenchmarkResult> {
                 return row;
             }
         );
+        return {
+            validate: () => {
+                if (container.children.length !== 10000) throw new Error('Frames created an invalid row count');
+            },
+            cleanup: dispose,
+        };
     }, 10, 2);
 }
 

@@ -1,13 +1,27 @@
-/**
- * The global context stack. 
- * Since Frames components execute synchronously, we can track context via a simple array of Maps.
- */
-const contextStack: Map<symbol, any>[] = [];
+type ContextSnapshot = ReadonlyMap<symbol, unknown>;
+
+let activeContext: ContextSnapshot = new Map();
+
+/** @internal */
+export function _captureContext(): ContextSnapshot {
+    return activeContext;
+}
+
+/** @internal */
+export function _runWithContext<T>(context: ContextSnapshot, fn: () => T): T {
+    const previousContext = activeContext;
+    activeContext = context;
+    try {
+        return fn();
+    } finally {
+        activeContext = previousContext;
+    }
+}
 
 export interface Context<T> {
     id: symbol;
     defaultValue: T;
-    Provider: (props: { value?: T, children?: () => any }) => any;
+    Provider: <R>(props: { value?: T, children: () => R }) => R;
 }
 
 /**
@@ -19,29 +33,16 @@ export function createContext<T>(defaultValue?: T): Context<T | undefined> {
     return {
         id,
         defaultValue,
-        Provider(props: { value?: T, children?: () => any }) {
-            // Inherit from current layer, or create new if empty
-            const currentLayer = contextStack[contextStack.length - 1] || new Map<symbol, any>();
-            const newLayer = new Map(currentLayer);
+        Provider<R>(props: { value?: T, children: () => R }) {
+            const context = new Map(activeContext);
             
-            // Register this provider's value
             if ('value' in props) {
-                newLayer.set(id, props.value);
+                context.set(id, props.value);
             }
-            
-            contextStack.push(newLayer);
 
-            try {
-                // Execute children inside this context layer.
-                // Our Babel plugin guarantees custom component children are wrapped in () => ...
-                if (props.children && typeof props.children === 'function') {
-                    return props.children();
-                }
-                return props.children;
-            } finally {
-                // Restore previous context
-                contextStack.pop();
-            }
+            return _runWithContext(context, () => {
+                return props.children();
+            });
         }
     };
 }
@@ -50,9 +51,8 @@ export function createContext<T>(defaultValue?: T): Context<T | undefined> {
  * Resolves the value of a Context from the nearest Provider in the tree.
  */
 export function useContext<T>(context: Context<T>): T {
-    const currentLayer = contextStack[contextStack.length - 1];
-    if (currentLayer && currentLayer.has(context.id)) {
-        return currentLayer.get(context.id);
+    if (activeContext.has(context.id)) {
+        return activeContext.get(context.id) as T;
     }
     return context.defaultValue;
 }

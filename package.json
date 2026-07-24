@@ -5,6 +5,12 @@
     "packages/*",
     "examples/*"
   ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/frames && npm run build --workspace=packages/vite-plugin-frames && npm run build --workspace=examples/demo-app && npm run build --workspace=examples/benchmark",
+    "test": "npm test --workspace=packages/frames",
+    "typecheck": "npm run build --workspace=packages/frames && npm run typecheck --workspace=packages/vite-plugin-frames",
+    "check": "npm run test && npm run typecheck && npm run build"
+  },
   "devDependencies": {
     "@babel/core": "^8.0.1",
     "@babel/plugin-syntax-jsx": "^8.0.1",

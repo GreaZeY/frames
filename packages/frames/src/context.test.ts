@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createContext, useContext } from './context';
+import { effect, state } from './reactivity';
 
 describe('Context API', () => {
     it('returns default value when no provider exists', () => {
@@ -58,5 +59,22 @@ describe('Context API', () => {
 
         expect(outerValue).toBe('dark');
         expect(innerValue).toBe('blue');
+    });
+
+    it('preserves provider values when an effect reruns', () => {
+        const ThemeContext = createContext('light');
+        const count = state(0);
+        const values: string[] = [];
+
+        ThemeContext.Provider({
+            value: 'dark',
+            children: () => effect(() => {
+                count.value;
+                values.push(useContext(ThemeContext)!);
+            }),
+        });
+
+        count.value = 1;
+        expect(values).toEqual(['dark', 'dark']);
     });
 });

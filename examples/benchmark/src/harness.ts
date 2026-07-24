@@ -8,6 +8,11 @@ export interface BenchmarkResult {
     max: number;
 }
 
+export interface BenchmarkSample {
+    validate?: () => void;
+    cleanup?: () => void;
+}
+
 export function median(arr: number[]): number {
     const sorted = [...arr].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
@@ -26,29 +31,35 @@ export function summarize(name: string, framework: 'frames' | 'react', runs: num
     };
 }
 
-export async function runTimed(fn: () => void | Promise<void>): Promise<number> {
+export async function runTimed(
+    fn: () => void | BenchmarkSample | Promise<void | BenchmarkSample>
+): Promise<[number, void | BenchmarkSample]> {
     const start = performance.now();
-    await fn();
-    return performance.now() - start;
+    const sample = await fn();
+    return [performance.now() - start, sample];
 }
 
 export async function benchmark(
     name: string,
     framework: 'frames' | 'react',
-    fn: () => void | Promise<void>,
+    fn: () => void | BenchmarkSample | Promise<void | BenchmarkSample>,
     iterations: number = 20,
     warmup: number = 5,
 ): Promise<BenchmarkResult> {
     // Warmup runs (discarded)
     for (let i = 0; i < warmup; i++) {
-        await fn();
+        const sample = await fn();
+        sample?.validate?.();
+        sample?.cleanup?.();
     }
 
     const runs: number[] = [];
     for (let i = 0; i < iterations; i++) {
         // Force GC if available
         if ((globalThis as any).gc) (globalThis as any).gc();
-        const elapsed = await runTimed(fn);
+        const [elapsed, sample] = await runTimed(fn);
+        sample?.validate?.();
+        sample?.cleanup?.();
         runs.push(elapsed);
     }
 

@@ -1,5 +1,5 @@
 import { transformSync } from '@babel/core';
-import framesBabelPlugin from 'frames/src/babel-plugin.ts';
+import framesBabelPlugin from 'frames/babel-plugin';
 import type { Plugin } from 'vite';
 
 export default function framesPlugin(): Plugin {
@@ -22,7 +22,7 @@ export default function framesPlugin(): Plugin {
                 });
                 return {
                     code: result?.code || code,
-                    map: result?.map
+                    map: result?.map ? JSON.stringify(result.map) : null
                 };
             }
         }

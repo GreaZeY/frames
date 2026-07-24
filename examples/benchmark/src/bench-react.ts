@@ -37,7 +37,14 @@ export async function reactCreate1000(): Promise<BenchmarkResult> {
             );
         });
 
-        root.unmount();
+        return {
+            validate: () => {
+                if (container.firstElementChild?.children.length !== 1000) {
+                    throw new Error('React created an invalid row count');
+                }
+            },
+            cleanup: () => root.unmount(),
+        };
     });
 }
 
@@ -81,6 +88,13 @@ export async function reactUpdate10th(): Promise<BenchmarkResult> {
                 )
             );
         });
+        return {
+            validate: () => {
+                if (container.firstElementChild?.firstElementChild?.textContent !== data[0].label) {
+                    throw new Error('React did not update row content');
+                }
+            },
+        };
     });
 
     root.unmount();
@@ -116,6 +130,13 @@ export async function reactReplace1000(): Promise<BenchmarkResult> {
                 )
             );
         });
+        return {
+            validate: () => {
+                if (container.firstElementChild?.children.length !== 1000) {
+                    throw new Error('React replacement lost rows');
+                }
+            },
+        };
     });
 
     root.unmount();
@@ -154,6 +175,13 @@ export async function reactSwapRows(): Promise<BenchmarkResult> {
                 )
             );
         });
+        return {
+            validate: () => {
+                if (container.firstElementChild?.children[1]?.textContent !== data[1].label) {
+                    throw new Error('React rendered the wrong row order');
+                }
+            },
+        };
     });
 
     root.unmount();
@@ -203,6 +231,13 @@ export async function reactRemoveRow(): Promise<BenchmarkResult> {
                 )
             );
         });
+        return {
+            validate: () => {
+                if (container.firstElementChild?.children.length !== data.length) {
+                    throw new Error('React removed the wrong row count');
+                }
+            },
+        };
     });
 
     root.unmount();
@@ -230,7 +265,14 @@ export async function reactCreate10000(): Promise<BenchmarkResult> {
             );
         });
 
-        root.unmount();
+        return {
+            validate: () => {
+                if (container.firstElementChild?.children.length !== 10000) {
+                    throw new Error('React created an invalid row count');
+                }
+            },
+            cleanup: () => root.unmount(),
+        };
     }, 10, 2);
 }
 

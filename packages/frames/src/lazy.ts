@@ -1,5 +1,8 @@
-type ComponentFn<P = any> = (props: P) => any;
-type ModuleWithDefault<P = any> = { default: ComponentFn<P> };
+import { _captureScope, _isScopeActive, _runInScope } from './reactivity';
+import type { SyncRenderable } from './runtime';
+
+type ComponentFn<P, R extends SyncRenderable> = (props: P) => R;
+type ModuleWithDefault<P, R extends SyncRenderable> = { default: ComponentFn<P, R> };
 
 /**
  * Lazily loads a component from a dynamic import.
@@ -18,11 +21,11 @@ type ModuleWithDefault<P = any> = { default: ComponentFn<P> };
  * <HeavyChart data={myData} />
  * ```
  */
-export function lazy<P extends Record<string, any>>(
-    loader: () => Promise<ModuleWithDefault<P>>
-): ComponentFn<P> {
-    let cached: ComponentFn<P> | null = null;
-    let pending: Promise<ModuleWithDefault<P>> | null = null;
+export function lazy<P extends Record<string, unknown>, R extends SyncRenderable>(
+    loader: () => Promise<ModuleWithDefault<P, R>>
+): (props: P) => R | Promise<R | null> {
+    let cached: ComponentFn<P, R> | null = null;
+    let pending: Promise<ModuleWithDefault<P, R>> | null = null;
 
     return (props: P) => {
         // Already resolved — call the component synchronously
@@ -32,13 +35,17 @@ export function lazy<P extends Record<string, any>>(
 
         // Kick off the import once, share the same promise for concurrent calls
         if (!pending) {
-            pending = loader();
+            pending = loader().catch(error => {
+                pending = null;
+                throw error;
+            });
         }
 
-        // Return a Promise that `insert()` handles natively
+        const scope = _captureScope();
         return pending.then(mod => {
             cached = mod.default;
-            return cached(props);
+            if (!_isScopeActive(scope)) return null;
+            return _runInScope(scope, () => cached!(props));
         });
     };
 }

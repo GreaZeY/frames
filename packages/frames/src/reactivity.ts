@@ -1,5 +1,123 @@
-let activeEffect: (() => void) | null = null;
-const effectStack: (() => void)[] = [];
+import { _captureContext, _runWithContext } from './context';
+
+type SubscriptionSet = Set<Subscriber>;
+type Subscriber = (() => void) & { __subscriptions?: Set<SubscriptionSet> };
+
+let activeEffect: Subscriber | null = null;
+const effectStack: Subscriber[] = [];
+const runningSubscribers = new Set<Subscriber>();
+const batchQueue = new Set<Subscriber>();
+let batchDepth = 0;
+let isFlushing = false;
+
+function runSubscriber(subscriber: Subscriber) {
+    if (runningSubscribers.has(subscriber)) return;
+    runningSubscribers.add(subscriber);
+    try {
+        subscriber();
+    } finally {
+        runningSubscribers.delete(subscriber);
+    }
+}
+
+function flushSubscribers() {
+    if (isFlushing || batchDepth > 0) return;
+    isFlushing = true;
+    try {
+        while (batchQueue.size > 0) {
+            const subscribers = [...batchQueue];
+            batchQueue.clear();
+            for (const subscriber of subscribers) runSubscriber(subscriber);
+        }
+    } finally {
+        isFlushing = false;
+    }
+}
+
+/** @internal - shared by signals and proxy stores */
+export function _notifySubscribers(subscribers: SubscriptionSet) {
+    for (const subscriber of [...subscribers]) {
+        if (runningSubscribers.has(subscriber)) continue;
+        if (batchDepth > 0 || isFlushing) {
+            batchQueue.add(subscriber);
+        } else {
+            runSubscriber(subscriber);
+        }
+    }
+}
+
+interface Owner {
+    parent: Owner | null;
+    children: Set<Owner>;
+    cleanups: Set<() => void>;
+    disposed: boolean;
+}
+
+export interface ScopeSnapshot {
+    readonly owner: Owner | null;
+    readonly context: ReturnType<typeof _captureContext>;
+}
+
+let activeOwner: Owner | null = null;
+
+function createOwner(parent: Owner | null): Owner {
+    const owner: Owner = {
+        parent,
+        children: new Set(),
+        cleanups: new Set(),
+        disposed: false,
+    };
+    parent?.children.add(owner);
+    return owner;
+}
+
+function disposeOwner(owner: Owner) {
+    if (owner.disposed) return;
+    owner.disposed = true;
+
+    for (const child of [...owner.children]) disposeOwner(child);
+    for (const cleanup of [...owner.cleanups]) cleanup();
+
+    owner.children.clear();
+    owner.cleanups.clear();
+    owner.parent?.children.delete(owner);
+}
+
+function runWithOwner<T>(owner: Owner, fn: () => T): T {
+    const previousOwner = activeOwner;
+    activeOwner = owner;
+    try {
+        return fn();
+    } finally {
+        activeOwner = previousOwner;
+    }
+}
+
+/** @internal */
+export function _captureScope(): ScopeSnapshot {
+    return { owner: activeOwner, context: _captureContext() };
+}
+
+/** @internal */
+export function _isScopeActive(scope: ScopeSnapshot): boolean {
+    return !scope.owner?.disposed;
+}
+
+/** @internal */
+export function _runInScope<T>(scope: ScopeSnapshot, fn: () => T): T {
+    const previousOwner = activeOwner;
+    activeOwner = scope.owner;
+    try {
+        return _runWithContext(scope.context, fn);
+    } finally {
+        activeOwner = previousOwner;
+    }
+}
+
+export function createRoot<T>(fn: (dispose: () => void) => T): T {
+    const owner = createOwner(null);
+    return runWithOwner(owner, () => fn(() => disposeOwner(owner)));
+}
 
 /** @internal — used by store.ts to hook into the same tracking system */
 export function _getActiveEffect() {
@@ -11,17 +129,15 @@ export type Signal<T> = {
 } & { value: T };
 
 export function effect(fn: () => void): () => void {
-    const subscriptions = new Set<Set<() => void>>();
+    const subscriptions = new Set<SubscriptionSet>();
+    const owner = createOwner(activeOwner);
+    const context = _captureContext();
 
-    const effectFn = () => {
-        // Run cleanups from the previous execution
-        const cleanups = cleanupMap.get(effectFn);
-        if (cleanups) {
-            for (const c of cleanups) {
-                c();
-            }
-            cleanupMap.set(effectFn, []);
-        }
+    const effectFn: Subscriber = () => {
+        if (owner.disposed) return;
+
+        // Dispose everything created by the previous execution.
+        for (const child of [...owner.children]) disposeOwner(child);
 
         // Clear old subscriptions so stale dependencies are dropped
         for (const depSet of subscriptions) {
@@ -31,8 +147,9 @@ export function effect(fn: () => void): () => void {
 
         effectStack.push(effectFn);
         activeEffect = effectFn;
+        const runOwner = createOwner(owner);
         try {
-            fn();
+            _runWithContext(context, () => runWithOwner(runOwner, fn));
         } finally {
             effectStack.pop();
             activeEffect = effectStack[effectStack.length - 1] || null;
@@ -40,36 +157,28 @@ export function effect(fn: () => void): () => void {
     };
 
     // Attach subscription tracking so signals can register themselves
-    (effectFn as any).__subscriptions = subscriptions;
+    effectFn.__subscriptions = subscriptions;
 
-    effectFn();
-
-    // Return a dispose function
-    return () => {
-        const cleanups = cleanupMap.get(effectFn);
-        if (cleanups) {
-            for (const c of cleanups) {
-                c();
-            }
-            cleanupMap.delete(effectFn);
-        }
-        for (const depSet of subscriptions) {
-            depSet.delete(effectFn);
-        }
+    owner.cleanups.add(() => {
+        for (const depSet of subscriptions) depSet.delete(effectFn);
         subscriptions.clear();
-    };
+    });
+
+    runSubscriber(effectFn);
+
+    return () => disposeOwner(owner);
 }
 
 export function state<T>(initialValue: T): Signal<T> {
     let _value = initialValue;
-    const subscribers = new Set<() => void>();
+    const subscribers: SubscriptionSet = new Set();
 
     return {
         get value() {
             if (activeEffect) {
                 subscribers.add(activeEffect);
                 // Register this dep set on the effect for cleanup
-                const subs = (activeEffect as any).__subscriptions as Set<Set<() => void>> | undefined;
+                const subs = activeEffect.__subscriptions;
                 if (subs) subs.add(subscribers);
             }
             return _value;
@@ -77,17 +186,7 @@ export function state<T>(initialValue: T): Signal<T> {
         set value(newValue: T) {
             if (!Object.is(_value, newValue)) {
                 _value = newValue;
-                // MUST copy to prevent infinite loops because effects re-subscribe synchronously
-                const toRun = [...subscribers];
-                if (batchDepth > 0) {
-                    for (const sub of toRun) {
-                        batchQueue.add(sub);
-                    }
-                } else {
-                    for (const sub of toRun) {
-                        sub();
-                    }
-                }
+                _notifySubscribers(subscribers);
             }
         }
     };
@@ -97,32 +196,24 @@ export function state<T>(initialValue: T): Signal<T> {
 export function derived<T>(fn: () => T): { readonly value: T } {
     let cached: T;
     let dirty = true;
-    const subscribers = new Set<() => void>();
+    const subscribers: SubscriptionSet = new Set();
 
     const markDirty = () => {
         if (!dirty) {
             dirty = true;
-            const toRun = [...subscribers];
-            if (batchDepth > 0) {
-                for (const sub of toRun) {
-                    batchQueue.add(sub);
-                }
-            } else {
-                for (const sub of toRun) {
-                    sub();
-                }
-            }
+            _notifySubscribers(subscribers);
         }
     };
 
     // Track the computation's own dependencies
     let dispose: (() => void) | null = null;
+    onCleanup(() => dispose?.());
 
     return {
         get value() {
             if (activeEffect) {
                 subscribers.add(activeEffect);
-                const subs = (activeEffect as any).__subscriptions as Set<Set<() => void>> | undefined;
+                const subs = activeEffect.__subscriptions;
                 if (subs) subs.add(subscribers);
             }
 
@@ -131,11 +222,11 @@ export function derived<T>(fn: () => T): { readonly value: T } {
                 if (dispose) dispose();
 
                 // Re-run computation inside an effect to track deps
-                const depSets = new Set<Set<() => void>>();
+                const depSets = new Set<SubscriptionSet>();
                 effectStack.push(markDirty);
                 const prev = activeEffect;
                 activeEffect = markDirty;
-                (markDirty as any).__subscriptions = depSets;
+                (markDirty as Subscriber).__subscriptions = depSets;
                 try {
                     cached = fn();
                 } finally {
@@ -155,36 +246,16 @@ export function derived<T>(fn: () => T): { readonly value: T } {
     };
 }
 
-// Batch multiple state updates into a single flush
-let batchDepth = 0;
-let batchQueue: Set<() => void> = new Set();
-
 export function batch(fn: () => void) {
     batchDepth++;
     try {
         fn();
     } finally {
         batchDepth--;
-        if (batchDepth === 0) {
-            const toRun = [...batchQueue];
-            batchQueue.clear();
-            for (const sub of toRun) {
-                sub();
-            }
-        }
+        flushSubscribers();
     }
 }
 
-// onCleanup: register a cleanup function for the current effect
-const cleanupMap = new WeakMap<() => void, (() => void)[]>();
-
 export function onCleanup(fn: () => void) {
-    if (activeEffect) {
-        let cleanups = cleanupMap.get(activeEffect);
-        if (!cleanups) {
-            cleanups = [];
-            cleanupMap.set(activeEffect, cleanups);
-        }
-        cleanups.push(fn);
-    }
+    activeOwner?.cleanups.add(fn);
 }

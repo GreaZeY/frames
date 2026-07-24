@@ -13,24 +13,36 @@ export function delegateEvent(eventName: string) {
 
 function globalEventHandler(e: Event) {
     const key = `$$${e.type}`;
-    let node = (e.composedPath && e.composedPath()[0]) || e.target;
-    
+    const path = e.composedPath?.();
+    let node: EventTarget | null = path?.[0] || e.target;
+
+    const invoke = (target: EventTarget) => {
+        const handler = (target as EventTarget & Record<string, unknown>)[key];
+        if (typeof handler !== 'function') return;
+
+        Object.defineProperty(e, 'currentTarget', {
+            configurable: true,
+            value: target,
+        });
+        try {
+            handler.call(target, e);
+        } finally {
+            Reflect.deleteProperty(e, 'currentTarget');
+        }
+    };
+
     // Reverse traverse the DOM path
-    if (e.composedPath) {
-        for (const n of e.composedPath()) {
-            if (n && (n as any)[key]) {
-                (n as any)[key](e);
-                if (e.cancelBubble) return;
-            }
+    if (path) {
+        for (const target of path) {
+            invoke(target);
+            if (e.cancelBubble) return;
         }
     } else {
         // Fallback for older browsers
         while (node) {
-            if ((node as any)[key]) {
-                (node as any)[key](e);
-                if (e.cancelBubble) return;
-            }
-            node = (node as Node).parentNode;
+            invoke(node);
+            if (e.cancelBubble) return;
+            node = node instanceof Node ? node.parentNode : null;
         }
     }
 }

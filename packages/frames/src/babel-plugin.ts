@@ -40,6 +40,23 @@ function resolveAttrName(raw: string): { prop: string; isDirect: boolean } {
     return { prop: mapped, isDirect: DIRECT_PROPS.has(mapped) };
 }
 
+type NamespacedJSXElement = t.JSXElement & { __framesSvg?: boolean };
+
+function markSvgTree(element: NamespacedJSXElement, inheritedSvg: boolean) {
+    const name = t.isJSXIdentifier(element.openingElement.name)
+        ? element.openingElement.name.name
+        : '';
+    const isSvg = name === 'svg' || inheritedSvg;
+    element.__framesSvg = isSvg;
+
+    const childSvg = isSvg && name !== 'foreignObject';
+    for (const child of element.children) {
+        if (t.isJSXElement(child)) {
+            markSvgTree(child as NamespacedJSXElement, childSvg);
+        }
+    }
+}
+
 export default function framesBabelPlugin(): PluginObject {
   return {
     name: 'frames-jsx-compiler',
@@ -63,6 +80,8 @@ export default function framesBabelPlugin(): PluginObject {
       },
       JSXElement(path: NodePath<t.JSXElement>, state: any) {
         const openingElement = path.node.openingElement;
+        const element = path.node as NamespacedJSXElement;
+        if (element.__framesSvg == null) markSvgTree(element, false);
         
         let tagName = "";
         let tagExpr: t.Expression;
@@ -86,14 +105,18 @@ export default function framesBabelPlugin(): PluginObject {
         const isComponent = /^[A-Z]/.test(tagName);
 
         if (isComponent) {
-            const props: t.ObjectProperty[] = [];
+            const props: (t.ObjectProperty | t.SpreadElement)[] = [];
 
             for (const attr of openingElement.attributes) {
-                if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
+                if (t.isJSXSpreadAttribute(attr)) {
+                    props.push(t.spreadElement(attr.argument));
+                } else if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
                     const attrName = attr.name.name;
                     const attrValue = attr.value;
 
-                    if (t.isStringLiteral(attrValue)) {
+                    if (attrValue == null) {
+                        props.push(t.objectProperty(t.identifier(attrName), t.booleanLiteral(true)));
+                    } else if (t.isStringLiteral(attrValue)) {
                         props.push(t.objectProperty(t.identifier(attrName), attrValue));
                     } else if (t.isJSXExpressionContainer(attrValue)) {
                         const getter = t.objectMethod(
@@ -136,9 +159,11 @@ export default function framesBabelPlugin(): PluginObject {
         const insertId = getRuntimeId(path, state, "insert");
         const effectId = getRuntimeId(path, state, "effect");
         const delegateId = getRuntimeId(path, state, "delegateEvent");
+        const setPropertyId = getRuntimeId(path, state, "setProperty");
 
         const elVar = path.scope.generateUidIdentifier("el");
         const exprs: t.Expression[] = [];
+        const hasSpread = openingElement.attributes.some(t.isJSXSpreadAttribute);
 
         const scopeBlock = path.scope.getBlockParent();
         (scopeBlock as any).push({ id: t.cloneNode(elVar), init: null, kind: 'var' as const });
@@ -147,21 +172,61 @@ export default function framesBabelPlugin(): PluginObject {
             t.assignmentExpression(
                 "=",
                 t.cloneNode(elVar),
-                t.callExpression(
-                    t.memberExpression(t.identifier("document"), t.identifier("createElement")),
-                    [t.stringLiteral(tagName)]
-                )
+                element.__framesSvg
+                    ? t.callExpression(
+                        t.memberExpression(t.identifier("document"), t.identifier("createElementNS")),
+                        [t.stringLiteral('http://www.w3.org/2000/svg'), t.stringLiteral(tagName)]
+                    )
+                    : t.callExpression(
+                        t.memberExpression(t.identifier("document"), t.identifier("createElement")),
+                        [t.stringLiteral(tagName)]
+                    )
             )
         );
-        
+
+        if (hasSpread) {
+            const setPropertiesId = getRuntimeId(path, state, "setProperties");
+            const properties: (t.ObjectProperty | t.SpreadElement)[] = [];
+
+            for (const attr of openingElement.attributes) {
+                if (t.isJSXSpreadAttribute(attr)) {
+                    properties.push(t.spreadElement(attr.argument));
+                } else if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name) && !attr.name.name.startsWith('on')) {
+                    const value = attr.value == null
+                        ? t.booleanLiteral(true)
+                        : t.isStringLiteral(attr.value)
+                            ? attr.value
+                            : t.isJSXExpressionContainer(attr.value)
+                                ? attr.value.expression as t.Expression
+                                : t.nullLiteral();
+                    properties.push(t.objectProperty(t.stringLiteral(attr.name.name), value));
+                }
+            }
+
+            exprs.push(t.callExpression(effectId, [
+                t.arrowFunctionExpression([], t.callExpression(setPropertiesId, [
+                    t.cloneNode(elVar),
+                    t.objectExpression(properties),
+                ])),
+            ]));
+        }
+
         for (const attr of openingElement.attributes) {
             if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
                 const attrName = attr.name.name;
                 const attrValue = attr.value;
-                
-                if (t.isStringLiteral(attrValue)) {
+
+                if (hasSpread && !attrName.startsWith('on')) continue;
+
+                if (attrValue == null) {
+                    exprs.push(t.callExpression(setPropertyId, [
+                        t.cloneNode(elVar),
+                        t.stringLiteral(attrName),
+                        t.booleanLiteral(true),
+                    ]));
+                } else if (t.isStringLiteral(attrValue)) {
                     const { prop, isDirect } = resolveAttrName(attrName);
-                    if (isDirect) {
+                    if (isDirect && !element.__framesSvg) {
                         exprs.push(
                             t.assignmentExpression(
                                 "=",
@@ -170,12 +235,11 @@ export default function framesBabelPlugin(): PluginObject {
                             )
                         );
                     } else {
-                        exprs.push(
-                            t.callExpression(
-                                t.memberExpression(t.cloneNode(elVar), t.identifier("setAttribute")),
-                                [t.stringLiteral(attrName), attrValue]
-                            )
-                        );
+                        exprs.push(t.callExpression(setPropertyId, [
+                            t.cloneNode(elVar),
+                            t.stringLiteral(attrName),
+                            attrValue,
+                        ]));
                     }
                 } else if (t.isJSXExpressionContainer(attrValue)) {
                     if (attrName.startsWith('on')) {
@@ -202,17 +266,14 @@ export default function framesBabelPlugin(): PluginObject {
                             );
                         }
                     } else {
-                        const { prop } = resolveAttrName(attrName);
-                        const updateExpr = t.assignmentExpression(
-                            "=",
-                            t.memberExpression(t.cloneNode(elVar), t.identifier(prop)),
-                            attrValue.expression as t.Expression
-                        );
-                        
                         exprs.push(
                             t.callExpression(
                                 effectId,
-                                [t.arrowFunctionExpression([], updateExpr)]
+                                [t.arrowFunctionExpression([], t.callExpression(setPropertyId, [
+                                    t.cloneNode(elVar),
+                                    t.stringLiteral(attrName),
+                                    attrValue.expression as t.Expression,
+                                ]))]
                             )
                         );
                     }

@@ -96,6 +96,19 @@ describe('effect', () => {
         count.value = 2;
         expect(observed).toBe(1); // should not have updated
     });
+
+    it('does not synchronously recurse when it writes to its own dependency', () => {
+        const count = state(0);
+        let runs = 0;
+
+        effect(() => {
+            runs++;
+            if (count.value === 0) count.value = 1;
+        });
+
+        expect(count.value).toBe(1);
+        expect(runs).toBe(1);
+    });
 });
 
 describe('derived', () => {
@@ -128,7 +141,18 @@ describe('derived', () => {
 });
 
 describe('batch', () => {
-    it('is importable', () => {
-        expect(typeof batch).toBe('function');
+    it('runs a dependent effect once after multiple writes', () => {
+        const first = state(1);
+        const second = state(2);
+        const spy = vi.fn(() => first.value + second.value);
+        effect(spy);
+
+        batch(() => {
+            first.value = 3;
+            second.value = 4;
+        });
+
+        expect(spy).toHaveBeenCalledTimes(2);
+        expect(spy).toHaveLastReturnedWith(7);
     });
 });

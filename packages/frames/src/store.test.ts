@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { effect } from './reactivity';
+import { batch, effect } from './reactivity';
 import { store, unwrap } from './store';
 
 describe('Reactive Store', () => {
@@ -103,5 +103,29 @@ describe('Reactive Store', () => {
         const ref1 = obj.child;
         const ref2 = obj.child;
         expect(ref1).toBe(ref2);
+    });
+
+    it('reuses proxies and array mutator functions', () => {
+        const raw = { items: [] as string[] };
+        const first = store(raw);
+        const second = store(raw);
+
+        expect(second).toBe(first);
+        expect(first.items).toBe(second.items);
+        expect(first.items.push).toBe(first.items.push);
+    });
+
+    it('batches store and signal-compatible notifications', () => {
+        const obj = store({ first: 1, second: 2 });
+        const spy = vi.fn(() => obj.first + obj.second);
+        effect(spy);
+
+        batch(() => {
+            obj.first = 3;
+            obj.second = 4;
+        });
+
+        expect(spy).toHaveBeenCalledTimes(2);
+        expect(spy).toHaveLastReturnedWith(7);
     });
 });

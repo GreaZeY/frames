@@ -7,24 +7,17 @@
 
 // We need access to the effect tracking internals.
 // Import the module so we can read activeEffect and register subscriptions.
-import * as reactivity from './reactivity';
+import { _getActiveEffect, _notifySubscribers, batch } from './reactivity';
 
 // Access the module's internal `activeEffect` via a shared getter we'll add.
 // For now, we tap into the same pattern: the store creates its own subscriber sets
 // per-path and registers them on effects the same way state() does.
 
-const STORE_RAW = Symbol('store_raw');
-const STORE_SUBSCRIBERS = Symbol('store_subscribers');
-
-type SubscriberMap = Map<string | symbol, Set<() => void>>;
+type StoreSubscriber = ReturnType<typeof _getActiveEffect> & {};
+type SubscriberMap = Map<string | symbol, Set<NonNullable<StoreSubscriber>>>;
 const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse']);
-
-function getSubscribers(obj: any): SubscriberMap {
-    if (!obj[STORE_SUBSCRIBERS]) {
-        obj[STORE_SUBSCRIBERS] = new Map();
-    }
-    return obj[STORE_SUBSCRIBERS];
-}
+const rawToProxy = new WeakMap<object, object>();
+const proxyToRaw = new WeakMap<object, object>();
 
 function getOrCreateSubSet(subs: SubscriberMap, key: string | symbol): Set<() => void> {
     let set = subs.get(key);
@@ -38,25 +31,19 @@ function getOrCreateSubSet(subs: SubscriberMap, key: string | symbol): Set<() =>
 function trackProperty(subs: SubscriberMap, key: string | symbol) {
     // Access the currently running effect from the reactivity module.
     // We use the exported `_getActiveEffect()` helper.
-    const active = reactivity._getActiveEffect();
+    const active = _getActiveEffect();
     if (active) {
         const subSet = getOrCreateSubSet(subs, key);
         subSet.add(active);
         // Register on the effect's subscription set for automatic cleanup
-        const effectSubs = (active as any).__subscriptions as Set<Set<() => void>> | undefined;
+        const effectSubs = active.__subscriptions;
         if (effectSubs) effectSubs.add(subSet);
     }
 }
 
 function notifyProperty(subs: SubscriberMap, key: string | symbol) {
     const subSet = subs.get(key);
-    if (subSet) {
-        // MUST copy to prevent infinite loops
-        const toRun = [...subSet];
-        for (const sub of toRun) {
-            sub();
-        }
-    }
+    if (subSet) _notifySubscribers(subSet);
 }
 
 function isPlainObject(val: unknown): val is Record<string | symbol, unknown> {
@@ -66,42 +53,38 @@ function isPlainObject(val: unknown): val is Record<string | symbol, unknown> {
 }
 
 function createProxy<T extends object>(target: T): T {
-    // If already a store proxy, return as-is
-    if ((target as any)[STORE_RAW]) return target as T;
+    if (proxyToRaw.has(target)) return target;
+    const cached = rawToProxy.get(target);
+    if (cached) return cached as T;
 
     const subs: SubscriberMap = new Map();
-    (target as any)[STORE_SUBSCRIBERS] = subs;
+    const mutators = new Map<string, (...args: unknown[]) => unknown>();
 
-    // Cache child proxies so we return the same reference
-    const childProxies = new Map<string | symbol, any>();
-
-
-
-    return new Proxy(target, {
+    const proxy = new Proxy(target, {
         get(obj, key, receiver) {
-            if (key === STORE_RAW) return obj;
-
             trackProperty(subs, key);
 
             const value = Reflect.get(obj, key, receiver);
 
             // Intercept array mutating methods so they go through the proxy's set trap
             if (Array.isArray(obj) && typeof key === 'string' && ARRAY_MUTATORS.has(key) && typeof value === 'function') {
-                return (...args: any[]) => {
-                    const result = (value as Function).apply(receiver, args);
-                    // Notify length since mutating methods change it
-                    notifyProperty(subs, 'length');
-                    return result;
-                };
+                let mutator = mutators.get(key);
+                if (!mutator) {
+                    mutator = (...args: unknown[]) => {
+                        let result: unknown;
+                        batch(() => {
+                            result = Reflect.apply(value, receiver, args);
+                            notifyProperty(subs, 'length');
+                        });
+                        return result;
+                    };
+                    mutators.set(key, mutator);
+                }
+                return mutator;
             }
 
             // Recursively wrap nested plain objects/arrays
-            if (isPlainObject(value) && typeof key !== 'symbol') {
-                if (!childProxies.has(key)) {
-                    childProxies.set(key, createProxy(value as object));
-                }
-                return childProxies.get(key);
-            }
+            if (isPlainObject(value) && typeof key !== 'symbol') return createProxy(value as object);
 
             return value;
         },
@@ -111,8 +94,6 @@ function createProxy<T extends object>(target: T): T {
             const result = Reflect.set(obj, key, newValue, receiver);
 
             if (!Object.is(oldValue, newValue)) {
-                // Invalidate cached child proxy if the value changed
-                childProxies.delete(key);
                 notifyProperty(subs, key);
             }
 
@@ -123,12 +104,15 @@ function createProxy<T extends object>(target: T): T {
             const had = key in obj;
             const result = Reflect.deleteProperty(obj, key);
             if (had) {
-                childProxies.delete(key);
                 notifyProperty(subs, key);
             }
             return result;
         }
     });
+
+    rawToProxy.set(target, proxy);
+    proxyToRaw.set(proxy, target);
+    return proxy;
 }
 
 /**
@@ -153,5 +137,5 @@ export function store<T extends object>(initial: T): T {
  * Gets the raw (unwrapped) object behind a store proxy.
  */
 export function unwrap<T extends object>(proxy: T): T {
-    return (proxy as any)[STORE_RAW] || proxy;
+    return (proxyToRaw.get(proxy) as T | undefined) || proxy;
 }

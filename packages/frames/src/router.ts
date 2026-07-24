@@ -1,15 +1,18 @@
-import { state, derived, effect } from './reactivity';
+import { state, effect } from './reactivity';
 import { insert } from './runtime';
+import type { Renderable } from './runtime';
 
 // ─── Global Router State ─────────────────────────────────────────────────────
 
 // Only run in the browser
 const isBrowser = typeof window !== 'undefined';
-export const currentPath = state(isBrowser ? window.location.pathname : '/');
+const getLocationPath = () =>
+    `${window.location.pathname}${window.location.search}${window.location.hash}`;
+export const currentPath = state(isBrowser ? getLocationPath() : '/');
 
 if (isBrowser) {
     window.addEventListener('popstate', () => {
-        currentPath.value = window.location.pathname;
+        currentPath.value = getLocationPath();
     });
 }
 
@@ -23,14 +26,14 @@ export function navigate(path: string, replace = false) {
     } else {
         window.history.pushState({}, '', path);
     }
-    currentPath.value = path;
+    currentPath.value = getLocationPath();
 }
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
 export interface RouteProps {
     path: string;
-    children?: any;
+    children?: Renderable;
 }
 
 /**
@@ -49,8 +52,9 @@ export function Route(props: RouteProps) {
 export interface LinkProps {
     to: string;
     class?: string;
-    children: any;
-    [key: string]: any;
+    children: Renderable;
+    target?: string;
+    download?: string | boolean;
 }
 
 /**
@@ -58,8 +62,22 @@ export interface LinkProps {
  */
 export function Link(props: LinkProps) {
     const handleClick = (e: MouseEvent) => {
+        if (
+            e.defaultPrevented ||
+            e.button !== 0 ||
+            e.metaKey ||
+            e.ctrlKey ||
+            e.shiftKey ||
+            e.altKey ||
+            props.target && props.target !== '_self' ||
+            props.download
+        ) return;
+
+        const url = new URL(props.to, window.location.href);
+        if (url.origin !== window.location.origin) return;
+
         e.preventDefault();
-        navigate(props.to);
+        navigate(`${url.pathname}${url.search}${url.hash}`);
     };
 
     // Return a raw anchor element. 
@@ -71,6 +89,8 @@ export function Link(props: LinkProps) {
     effect(() => {
         el.href = props.to;
         if (props.class) el.className = props.class;
+        if (props.target) el.target = props.target;
+        if (props.download) el.download = typeof props.download === 'string' ? props.download : '';
     });
 
     el.addEventListener('click', handleClick);
