@@ -2,12 +2,18 @@ import { transformSync } from '@babel/core';
 import framesBabelPlugin from 'frames/babel-plugin';
 import type { Plugin } from 'vite';
 
-export default function framesPlugin(): Plugin {
+interface FramesPluginOptions {
+    include?: RegExp;
+}
+
+export default function framesPlugin(options: FramesPluginOptions = {}): Plugin {
+    const include = options.include ?? /\.[jt]sx$/;
+
     return {
         name: 'vite-plugin-frames',
         enforce: 'pre',
         transform(code: string, id: string) {
-            if (id.endsWith('.tsx') || id.endsWith('.jsx')) {
+            if (include.test(id.split('?')[0])) {
                 const result = transformSync(code, {
                     filename: id,
                     presets: [
