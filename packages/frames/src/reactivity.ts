@@ -197,7 +197,7 @@ export type Signal<T> = {
     readonly value: T;
 } & { value: T };
 
-export function effect(fn: () => void): () => void {
+export function effect(fn: () => void | (() => void)): () => void {
     const subscriptions = new Set<SubscriptionSet>();
     const owner = createOwner(activeOwner);
     const context = _captureContext();
@@ -218,7 +218,8 @@ export function effect(fn: () => void): () => void {
         activeEffect = effectFn;
         const runOwner = createOwner(owner);
         try {
-            _runWithContext(context, () => runWithOwner(runOwner, fn));
+            const cleanup = _runWithContext(context, () => runWithOwner(runOwner, fn));
+            if (cleanup) runOwner.cleanups.add(cleanup);
         } finally {
             effectStack.pop();
             activeEffect = effectStack[effectStack.length - 1] || null;

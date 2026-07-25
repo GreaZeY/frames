@@ -1,4 +1,6 @@
 import { transformSync } from '@babel/core';
+import syntaxJsx from '@babel/plugin-syntax-jsx';
+import presetTypeScript from '@babel/preset-typescript';
 import framesBabelPlugin from 'frames/babel-plugin';
 import type { Plugin } from 'vite';
 
@@ -17,10 +19,10 @@ export default function framesPlugin(options: FramesPluginOptions = {}): Plugin 
                 const result = transformSync(code, {
                     filename: id,
                     presets: [
-                        '@babel/preset-typescript'
+                        presetTypeScript
                     ],
                     plugins: [
-                        '@babel/plugin-syntax-jsx',
+                        syntaxJsx,
                         framesBabelPlugin
                     ],
                     ast: false,

@@ -72,7 +72,10 @@ export default function framesBabelPlugin(): PluginObject {
                 }
             } else if (t.isJSXElement(childNode) || t.isJSXFragment(childNode)) {
                 childrenExprs.push(childNode as unknown as t.Expression);
-            } else if (t.isJSXExpressionContainer(childNode)) {
+            } else if (
+                t.isJSXExpressionContainer(childNode) &&
+                !t.isJSXEmptyExpression(childNode.expression)
+            ) {
                 childrenExprs.push(t.arrowFunctionExpression([], childNode.expression as t.Expression));
             }
         }
@@ -113,15 +116,18 @@ export default function framesBabelPlugin(): PluginObject {
                 } else if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
                     const attrName = attr.name.name;
                     const attrValue = attr.value;
+                    const attrKey = () => t.isValidIdentifier(attrName)
+                        ? t.identifier(attrName)
+                        : t.stringLiteral(attrName);
 
                     if (attrValue == null) {
-                        props.push(t.objectProperty(t.identifier(attrName), t.booleanLiteral(true)));
+                        props.push(t.objectProperty(attrKey(), t.booleanLiteral(true)));
                     } else if (t.isStringLiteral(attrValue)) {
-                        props.push(t.objectProperty(t.identifier(attrName), attrValue));
+                        props.push(t.objectProperty(attrKey(), attrValue));
                     } else if (t.isJSXExpressionContainer(attrValue)) {
                         const getter = t.objectMethod(
                             "get",
-                            t.identifier(attrName),
+                            attrKey(),
                             [],
                             t.blockStatement([t.returnStatement(attrValue.expression as t.Expression)])
                         );
@@ -140,7 +146,10 @@ export default function framesBabelPlugin(): PluginObject {
                     }
                 } else if (t.isJSXElement(childNode) || t.isJSXFragment(childNode)) {
                     childrenExprs.push(childNode as unknown as t.Expression);
-                } else if (t.isJSXExpressionContainer(childNode)) {
+                } else if (
+                    t.isJSXExpressionContainer(childNode) &&
+                    !t.isJSXEmptyExpression(childNode.expression)
+                ) {
                     childrenExprs.push(t.arrowFunctionExpression([], childNode.expression as t.Expression));
                 }
             }
@@ -300,7 +309,10 @@ export default function framesBabelPlugin(): PluginObject {
                         [t.cloneNode(elVar), childNode as unknown as t.Expression]
                     )
                 );
-            } else if (t.isJSXExpressionContainer(childNode)) {
+            } else if (
+                t.isJSXExpressionContainer(childNode) &&
+                !t.isJSXEmptyExpression(childNode.expression)
+            ) {
                 exprs.push(
                     t.callExpression(
                         insertId,

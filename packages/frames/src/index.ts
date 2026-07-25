@@ -1,15 +1,3 @@
-declare global {
-    namespace JSX {
-        interface IntrinsicElements {
-            [elemName: string]: Record<string, unknown>;
-        }
-        type Element = Node;
-        interface ElementClass {}
-        interface ElementAttributesProperty { props: {}; }
-        interface ElementChildrenAttribute { children: {}; }
-    }
-}
-
 // Frames: Public API
 export {
     state,
@@ -41,6 +29,8 @@ export {
 export type { RouteDefinition, RouteMatch } from './router';
 export { createContext, useContext } from './context';
 export { Portal } from './portal';
+export { Dynamic } from './dynamic';
+export type { DynamicComponent, DynamicProps } from './dynamic';
 export type { Context } from './context';
 export { store, unwrap } from './store';
 export { lazy } from './lazy';

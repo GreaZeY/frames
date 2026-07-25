@@ -97,6 +97,20 @@ describe('effect', () => {
         expect(observed).toBe(1); // should not have updated
     });
 
+    it('runs the previous cleanup before re-running and on dispose', () => {
+        const count = state(0);
+        const cleanup = vi.fn();
+        const dispose = effect(() => {
+            count.value;
+            return cleanup;
+        });
+
+        count.value = 1;
+        expect(cleanup).toHaveBeenCalledTimes(1);
+        dispose();
+        expect(cleanup).toHaveBeenCalledTimes(2);
+    });
+
     it('does not synchronously recurse when it writes to its own dependency', () => {
         const count = state(0);
         let runs = 0;

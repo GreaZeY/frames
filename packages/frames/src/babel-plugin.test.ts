@@ -84,6 +84,11 @@ describe('frames babel plugin', () => {
         expect(out).toContain('.appendChild(');
     });
 
+    it('ignores JSX comments in native and component children', () => {
+        expect(() => compile('const a = <div>{/* note */}<span /></div>;')).not.toThrow();
+        expect(() => compile('const a = <Component>{/* note */}<span /></Component>;')).not.toThrow();
+    });
+
     it('compiles dynamic text children', () => {
         const out = compile('const a = <div>{count.value}</div>;');
         expect(out).toContain('insert(_el, () => count.value)');
@@ -135,6 +140,16 @@ describe('frames babel plugin', () => {
         });
 
         expect(result).toEqual({ label: 'Ready', active: true });
+    });
+
+    it('passes hyphenated props to components', () => {
+        const Component = (props: Record<string, unknown>) => props;
+        const result = execute('<Component aria-label="Save" data-state={state.value} />', {
+            Component,
+            state: runtime.state('ready'),
+        });
+
+        expect(result).toMatchObject({ 'aria-label': 'Save', 'data-state': 'ready' });
     });
 
     it('updates event handlers and refs supplied through spread props', () => {
