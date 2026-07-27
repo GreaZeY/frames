@@ -1,4 +1,5 @@
 import { state, effect, onCleanup } from './reactivity';
+import type { Signal } from './reactivity';
 import { insert } from './runtime';
 import type { Renderable } from './runtime';
 import { createContext, useContext } from './context';
@@ -22,15 +23,127 @@ if (isBrowser) {
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
 
-export function navigate(path: string, replace = false) {
-    if (!isBrowser) return;
-    
-    if (replace) {
-        window.history.replaceState({}, '', path);
-    } else {
-        window.history.pushState({}, '', path);
+export interface NavigateOptions {
+    replace?: boolean;
+    state?: unknown;
+}
+
+export type NavigateTarget = string | number;
+
+type BlockerState = 'unblocked' | 'blocked' | 'proceeding';
+
+export interface NavigationBlocker {
+    state: Signal<BlockerState>;
+    proceed: () => void;
+    reset: () => void;
+}
+
+type PendingNavigation = () => void;
+type BlockerEntry = {
+    enabled: () => boolean;
+    state: Signal<BlockerState>;
+    pending: PendingNavigation | null;
+};
+
+const blockers = new Set<BlockerEntry>();
+
+const runNavigation = (action: PendingNavigation, bypass?: BlockerEntry) => {
+    const blocker = [...blockers].find(entry => entry !== bypass && entry.enabled());
+    if (!blocker) {
+        action();
+        return true;
     }
-    currentPath.value = getLocationPath();
+
+    blocker.pending = action;
+    blocker.state.value = 'blocked';
+    return false;
+};
+
+export function navigate(
+    target: NavigateTarget,
+    options: boolean | NavigateOptions = false,
+) {
+    if (!isBrowser) return;
+
+    const resolved = typeof options === 'boolean' ? { replace: options } : options;
+    runNavigation(() => {
+        if (typeof target === 'number') {
+            window.history.go(target);
+            return;
+        }
+
+        if (resolved.replace) {
+            window.history.replaceState(resolved.state ?? null, '', target);
+        } else {
+            window.history.pushState(resolved.state ?? null, '', target);
+        }
+        currentPath.value = getLocationPath();
+    });
+}
+
+export const useNavigate = () => navigate;
+
+export const location = {
+    get pathname() {
+        return new URL(currentPath.value, 'http://frames.local').pathname;
+    },
+    get search() {
+        return new URL(currentPath.value, 'http://frames.local').search;
+    },
+    get hash() {
+        return new URL(currentPath.value, 'http://frames.local').hash;
+    },
+    get state() {
+        return isBrowser ? window.history.state : null;
+    },
+};
+
+export const useLocation = () => location;
+
+const reactiveSearchParams = new Proxy(new URLSearchParams(), {
+    get(_target, property) {
+        const params = searchParams();
+        const value = Reflect.get(params, property, params);
+        return typeof value === 'function' ? value.bind(params) : value;
+    },
+});
+
+export function setSearchParams(
+    next: URLSearchParams | string | Record<string, string>,
+    options: NavigateOptions = {},
+) {
+    const params = next instanceof URLSearchParams
+        ? next
+        : new URLSearchParams(next);
+    const query = params.toString();
+    navigate(`${location.pathname}${query ? `?${query}` : ''}${location.hash}`, options);
+}
+
+export const useSearchParams = () => [reactiveSearchParams, setSearchParams] as const;
+
+export function useBlocker(enabled: boolean | (() => boolean)): NavigationBlocker {
+    const entry: BlockerEntry = {
+        enabled: typeof enabled === 'function' ? enabled : () => enabled,
+        state: state<BlockerState>('unblocked'),
+        pending: null,
+    };
+    blockers.add(entry);
+    onCleanup(() => blockers.delete(entry));
+
+    return {
+        state: entry.state,
+        proceed: () => {
+            const pending = entry.pending;
+            entry.pending = null;
+            entry.state.value = 'proceeding';
+            if (pending) runNavigation(pending, entry);
+            entry.state.value = 'unblocked';
+        },
+        reset: () => {
+            entry.pending = null;
+            entry.state.value = 'unblocked';
+        },
+    };
 }
 
 // ─── Components ──────────────────────────────────────────────────────────────
@@ -166,6 +279,8 @@ export function Outlet() {
     return useContext(OutletContext) ?? null;
 }
 
+export const useOutlet = Outlet;
+
 export function useParams() {
     return useContext(ParamsContext) ?? {};
 }
@@ -195,6 +310,7 @@ export function Route(props: RouteProps) {
 export interface LinkProps {
     to: string;
     class?: string;
+    className?: string;
     children: Renderable;
     target?: string;
     download?: string | boolean;
@@ -231,7 +347,8 @@ export function Link(props: LinkProps) {
     // We bind the href reactively just in case `props.to` changes dynamically
     effect(() => {
         el.href = props.to;
-        if (props.class) el.className = props.class;
+        const className = props.class ?? props.className;
+        if (className) el.className = className;
         if (props.target) el.target = props.target;
         if (props.download) el.download = typeof props.download === 'string' ? props.download : '';
     });

@@ -2,14 +2,14 @@ import type { Renderable } from './runtime';
 
 export namespace JSX {
     export type Element = Renderable;
-    export type ElementType = string | ((props: never) => Renderable);
+    export type ElementType = string | ((props: any) => Renderable);
+
+    export interface IntrinsicAttributes {
+        key?: string | number;
+    }
 
     export interface IntrinsicElements {
         [elementName: string]: Record<string, unknown>;
-    }
-
-    export interface ElementAttributesProperty {
-        props: Record<string, unknown>;
     }
 
     export interface ElementChildrenAttribute {

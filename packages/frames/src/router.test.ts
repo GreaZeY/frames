@@ -11,9 +11,13 @@ import {
     Route,
     Router,
     searchParams,
+    useBlocker,
+    useLocation,
+    useSearchParams,
     useParams,
 } from './router';
 import { insert, mount } from './runtime';
+import { createRoot } from './reactivity';
 
 describe('router navigation', () => {
     beforeEach(() => {
@@ -24,6 +28,33 @@ describe('router navigation', () => {
     it('keeps pathname, search, and hash in router state', () => {
         navigate('/records?page=2#latest');
         expect(currentPath.value).toBe('/records?page=2#latest');
+    });
+
+    it('preserves navigation state and replaces search params reactively', () => {
+        navigate('/records', { state: { source: 'test' } });
+        expect(useLocation().state).toEqual({ source: 'test' });
+
+        const [params, setParams] = useSearchParams();
+        setParams({ page: '2' }, { replace: true });
+        expect(params.get('page')).toBe('2');
+        expect(currentPath.value).toBe('/records?page=2');
+    });
+
+    it('blocks and can resume programmatic navigation', () => {
+        let dispose = () => undefined;
+        const blocker = createRoot(cleanup => {
+            dispose = cleanup;
+            return useBlocker(true);
+        });
+        navigate('/records');
+
+        expect(blocker.state.value).toBe('blocked');
+        expect(currentPath.value).toBe('/');
+
+        blocker.proceed();
+        expect(currentPath.value).toBe('/records');
+        expect(blocker.state.value).toBe('unblocked');
+        dispose();
     });
 
     it('matches legacy routes by pathname when query or hash exists', () => {

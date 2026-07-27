@@ -18,15 +18,28 @@ export {
     Route,
     Router,
     Outlet,
+    useOutlet,
     Redirect,
     Link,
     navigate,
+    location,
     currentPath,
     matchRoutes,
     searchParams,
+    setSearchParams,
+    useNavigate,
+    useLocation,
+    useSearchParams,
+    useBlocker,
     useParams,
 } from './router';
-export type { RouteDefinition, RouteMatch } from './router';
+export type {
+    NavigateOptions,
+    NavigateTarget,
+    NavigationBlocker,
+    RouteDefinition,
+    RouteMatch,
+} from './router';
 export { createContext, useContext } from './context';
 export { Portal } from './portal';
 export { Dynamic } from './dynamic';

@@ -1,9 +1,9 @@
 import { _captureScope, _isScopeActive, _runInScope } from './reactivity';
-import type { SyncRenderable } from './runtime';
+import type { Renderable } from './runtime';
 
-type ComponentFn<P, R extends SyncRenderable> = (props: P) => R;
-type ModuleWithDefault<P, R extends SyncRenderable> = { default: ComponentFn<P, R> };
-export type LazyComponent<P, R extends SyncRenderable> = ((props: P) => R | Promise<R | null>) & {
+type ComponentFn<P, R extends Renderable> = (props: P) => R;
+type ModuleWithDefault<P, R extends Renderable> = { default: ComponentFn<P, R> };
+export type LazyComponent<P, R extends Renderable> = ((props: P) => Renderable) & {
     preload: () => Promise<void>;
 };
 
@@ -24,7 +24,7 @@ export type LazyComponent<P, R extends SyncRenderable> = ((props: P) => R | Prom
  * <HeavyChart data={myData} />
  * ```
  */
-export function lazy<P extends Record<string, unknown>, R extends SyncRenderable>(
+export function lazy<P, R extends Renderable>(
     loader: () => Promise<ModuleWithDefault<P, R>>
 ): LazyComponent<P, R> {
     let cached: ComponentFn<P, R> | null = null;
